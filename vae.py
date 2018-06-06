@@ -13,9 +13,7 @@ import sys
 # Constants and params
 theta_range = np.deg2rad(120.0)
 num_rays = 100
-lidar_range = 5.0
-max_velocity = 2.0
-trained = False
+trained = True
 
 H = 9 # no of past observations
 F = 1 # no of future predictions
@@ -38,12 +36,12 @@ def prepareDataset(train_file, test_file):
       for j in range(H):
         parts = lines[i+j].split(" ")
         for k in range(num_rays):
-          x.append(float(parts[k+2])/lidar_range)
+          x.append(float(parts[k+2]))
         u.append(float(parts[0]))
       for j in range(F):
         parts = lines[i+j+H].split(" ")
         for k in range(num_rays):
-          y.append(float(parts[k+2])/lidar_range)
+          y.append(float(parts[k+2]))
       x = x + u
       x_raw.append(x)
       y_raw.append(y)
@@ -75,12 +73,12 @@ def prepareDataset(train_file, test_file):
     for j in range(H):
       parts = lines[i+j].split(" ")
       for k in range(num_rays):
-        x.append(float(parts[k+2])/lidar_range)
+        x.append(float(parts[k+2]))
       u.append(float(parts[0]))
     for j in range(F):
       parts = lines[i+j+H].split(" ")
       for k in range(num_rays):
-        y.append(float(parts[k+2])/lidar_range)
+        y.append(float(parts[k+2]))
     x = x + u
     x_raw.append(x)
     y_raw.append(y)
@@ -116,12 +114,23 @@ def plot_results(models,
   encoder, decoder = models
   x, y = data
   theta_inc = theta_range / float(num_rays)
-  for k in range(20):
+  for k in range(120, 300, 1):
+    plt.figure()
     for i in range(num_samples):
       _, _, z = encoder.predict(np.array([x[k],]), batch_size=batch_size)
       y_pred = decoder.predict(z, batch_size=batch_size)
-      plt.plot([i * np.rad2deg(theta_inc) for i in range(num_rays)], y_pred[0], 'b.')
-    plt.plot([i * np.rad2deg(theta_inc) for i in range(num_rays)], y[k], 'r.')
+      plt.plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], y_pred[0], 'b.')
+    plt.plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], y[k], 'r.')
+    plt.ylabel("output")
+
+    '''
+    plt.figure()
+    x_plot = np.asarray(np.split(x[k][:(H*num_rays)], H))
+    for i in range(H):
+      plt.plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], x_plot[i][:num_rays], 'b.')
+    plt.ylabel("input")
+    '''
+
     plt.show()
 
 x_train, y_train, x_val, y_val, x_test, y_test = prepareDataset(sys.argv[1], sys.argv[2])
@@ -136,6 +145,7 @@ intermediate_dim = 505
 batch_size = 128
 latent_dim = 50
 epochs = 30
+num_samples = 50
 
 # VAE model = encoder + decoder
 # build encoder model
@@ -156,7 +166,7 @@ encoder.summary()
 # build decoder model
 latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
 y = Dense(intermediate_dim, activation='relu')(latent_inputs)
-outputs = Dense(output_dim, activation='sigmoid')(y)
+outputs = Dense(output_dim, activation='relu')(y)
 
 # instantiate decoder model
 decoder = Model(latent_inputs, outputs, name='decoder')
@@ -198,4 +208,4 @@ if __name__ == '__main__':
     print("Saved weights to disk")
 
   #plot_model(vae, to_file='vae.png', show_shapes=True)
-  plot_results(models, test_data, batch_size=batch_size, num_samples=50)
+  plot_results(models, test_data, batch_size=batch_size, num_samples=num_samples)
