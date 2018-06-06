@@ -13,30 +13,37 @@ import sys
 # Constants and params
 theta_range = np.deg2rad(120.0)
 num_rays = 100
+lidar_range = 5.0
+max_velocity = 2.0
+trained = False
 
 H = 9 # no of past observations
 F = 1 # no of future predictions
 
 training_data_fraction = 0.8
 
-def prepareDataset(filename):
-  with open(filename) as f:
+def prepareDataset(train_file, test_file):
+  x_train, x_val, y_train, y_val, x_test, y_test = [], [], [], [], [], []
+  
+  if not trained:
+    f1 = open(train_file, "r")
     x_raw = []
     y_raw = []
-    lines = [line.rstrip('\n') for line in f]
+    lines = [line.rstrip('\n') for line in f1]
     for i in range(len(lines)-H-F):
+      print "preparing training data point", i
       x = []
       y = []
       u = []
       for j in range(H):
         parts = lines[i+j].split(" ")
         for k in range(num_rays):
-          x.append(float(parts[k+2]))
+          x.append(float(parts[k+2])/lidar_range)
         u.append(float(parts[0]))
       for j in range(F):
         parts = lines[i+j+H].split(" ")
         for k in range(num_rays):
-          y.append(float(parts[k+2]))
+          y.append(float(parts[k+2])/lidar_range)
       x = x + u
       x_raw.append(x)
       y_raw.append(y)
@@ -46,16 +53,42 @@ def prepareDataset(filename):
 
     n = len(lines)-H-F
     n_train_samples = int(training_data_fraction * n)
-    n_test_samples = n - n_train_samples
+    n_val_samples = n - n_train_samples
 
     training_idx = np.random.randint(x.shape[0], size=n_train_samples)
-    test_idx = np.random.randint(x.shape[0], size=n_test_samples)
+    val_idx = np.random.randint(x.shape[0], size=n_val_samples)
     
-    x_train, x_test = x[training_idx,:], x[test_idx,:]
-    y_train, y_test = y[training_idx,:], y[test_idx,:]
+    x_train, x_val = x[training_idx,:], x[val_idx,:]
+    y_train, y_val = y[training_idx,:], y[val_idx,:]
 
-    print("Prepared dataset!")
-    return x_train, y_train, x_test, y_test
+    print("Prepared training dataset!")
+
+  f2 = open(test_file, "r")
+  x_raw = []
+  y_raw = []
+  lines = [line.rstrip('\n') for line in f2]
+  for i in range(len(lines)-H-F):
+    print "preparing testing data point", i
+    x = []
+    y = []
+    u = []
+    for j in range(H):
+      parts = lines[i+j].split(" ")
+      for k in range(num_rays):
+        x.append(float(parts[k+2])/lidar_range)
+      u.append(float(parts[0]))
+    for j in range(F):
+      parts = lines[i+j+H].split(" ")
+      for k in range(num_rays):
+        y.append(float(parts[k+2])/lidar_range)
+    x = x + u
+    x_raw.append(x)
+    y_raw.append(y)
+
+  x_test = np.asarray(x_raw)
+  y_test = np.asarray(y_raw)    
+
+  return x_train, y_train, x_val, y_val, x_test, y_test
 
 # reparameterization trick
 # instead of sampling from Q(z|X), sample eps = N(0,I)
@@ -75,43 +108,34 @@ def sampling(args):
   epsilon = K.random_normal(shape=(batch, dim))
   return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
-def plot_results(model,
+def plot_results(models,
                  data,
                  batch_size=128,
-                 model_name="vae_mnist"):
+                 num_samples=1):
   #encoder, decoder = models
-  x_test, y_test = data
-
-  print "xtest", x_test[0]
-
-  #z_mean, z_log_var, z = encoder.predict(x_test)
-  
-  #print "latent", z[0]
-
-
-  y_pred = model.predict(x_test)
-
-  print "y_pred", y_pred[0]
-
-  vae.evaluate(x_test, y_test, batch_size=batch_size)
-
+  encoder, decoder = models
+  x, y = data
   theta_inc = theta_range / float(num_rays)
-  plt.plot([i * np.rad2deg(theta_inc) for i in range(num_rays)], y_test[0], 'r.')
-  plt.plot([i * np.rad2deg(theta_inc) for i in range(num_rays)], y_pred[0], 'b.')
-  plt.show()
+  for k in range(20):
+    for i in range(num_samples):
+      _, _, z = encoder.predict(np.array([x[k],]), batch_size=batch_size)
+      y_pred = decoder.predict(z, batch_size=batch_size)
+      plt.plot([i * np.rad2deg(theta_inc) for i in range(num_rays)], y_pred[0], 'b.')
+    plt.plot([i * np.rad2deg(theta_inc) for i in range(num_rays)], y[k], 'r.')
+    plt.show()
 
-x_train, y_train, x_test, y_test = prepareDataset(sys.argv[1])
+x_train, y_train, x_val, y_val, x_test, y_test = prepareDataset(sys.argv[1], sys.argv[2])
 
 # network parameters
-original_dim = x_train.shape[1]
-output_dim = y_train.shape[1]
+original_dim = x_test.shape[1]
+output_dim = y_test.shape[1]
 
 input_shape = (original_dim, )
 output_shape = (output_dim, )
 intermediate_dim = 505
 batch_size = 128
-latent_dim = 101
-epochs = 5
+latent_dim = 50
+epochs = 30
 
 # VAE model = encoder + decoder
 # build encoder model
@@ -127,7 +151,7 @@ z = Lambda(sampling, output_shape=(latent_dim,), name='z')([z_mean, z_log_var])
 # instantiate encoder model
 encoder = Model(inputs, [z_mean, z_log_var, z], name='encoder')
 encoder.summary()
-plot_model(encoder, to_file='vae_encoder.png', show_shapes=True)
+#plot_model(encoder, to_file='vae_encoder.png', show_shapes=True)
 
 # build decoder model
 latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
@@ -137,7 +161,7 @@ outputs = Dense(output_dim, activation='sigmoid')(y)
 # instantiate decoder model
 decoder = Model(latent_inputs, outputs, name='decoder')
 decoder.summary()
-plot_model(decoder, to_file='vae_decoder.png', show_shapes=True)
+#plot_model(decoder, to_file='vae_decoder.png', show_shapes=True)
 
 # instantiate VAE model
 outputs = decoder(encoder(inputs)[2])
@@ -148,29 +172,30 @@ def vae_loss_function(y_true, y_pred):
   kl_loss = K.sum(kl_loss, axis=-1)
   kl_loss *= -0.5
   mse_loss = mse(y_true, y_pred)
+  mse_loss *= original_dim
   return K.mean(mse_loss + kl_loss)
 
 if __name__ == '__main__':
-  trained = False
-  data = (x_train, y_train)
+  models = (encoder, decoder)
+  test_data = (x_test, y_test)
 
-  vae.compile(optimizer='adam', loss=vae_loss_function)
-  vae.summary()
-  
   if trained:
     # load weights into new model
     vae.load_weights("vae_weights.h5")
     vae.compile(optimizer='adam', loss=vae_loss_function)
+    vae.summary()
     print("Loaded model from disk")
   else:
+    vae.compile(optimizer='adam', loss=vae_loss_function)
+    vae.summary()
     vae.fit(x_train,
             y_train,
             epochs=epochs,
             batch_size=batch_size,
-            validation_data=(x_test, y_test))
+            validation_data=(x_val, y_val))
     # serialize weights to HDF5
     vae.save_weights("vae_weights.h5")
-    print("Saved model to disk")
+    print("Saved weights to disk")
 
-  plot_model(vae, to_file='vae.png', show_shapes=True)
-  plot_results(vae, data, batch_size=batch_size, model_name="vae")
+  #plot_model(vae, to_file='vae.png', show_shapes=True)
+  plot_results(models, test_data, batch_size=batch_size, num_samples=50)
