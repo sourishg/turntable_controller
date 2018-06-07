@@ -4,6 +4,7 @@ from keras.losses import mse, binary_crossentropy
 from keras.utils import plot_model
 from keras import backend as K
 from keras.engine.topology import Layer
+from keras import initializers, activations
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -26,11 +27,13 @@ class RotateLIDAR(Layer):
     def __init__(self, num_rays, 
                  num_past_obs,
                  num_future_pred,
+                 activation,
                  **kwargs):
         self.num_rays = num_rays
         self.num_past_obs = num_past_obs
         self.num_future_pred = num_future_pred
         self.output_dim = num_future_pred * num_rays
+        self.activation = activations.get(activation)
         super(RotateLIDAR, self).__init__(**kwargs)
 
     def build(self, input_shape):
@@ -42,7 +45,10 @@ class RotateLIDAR(Layer):
         super(RotateLIDAR, self).build(input_shape)  # Be sure to call this at the end
 
     def call(self, x):
-        return K.dot(x, self.kernel)
+        output = K.dot(x, self.kernel)
+        if self.activation is not None:
+            output = self.activation(output)
+        return output
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.output_dim)
@@ -178,9 +184,9 @@ def plot_results(models,
 
 x_train, y_train, x_val, y_val, x_test, y_test = prepareDataset(sys.argv[1], sys.argv[2])
 
-x_train = np.expand_dims(x_train, axis=2)
-x_val = np.expand_dims(x_val, axis=2)
-x_test = np.expand_dims(x_test, axis=2)
+#x_train = np.expand_dims(x_train, axis=2)
+#x_val = np.expand_dims(x_val, axis=2)
+#x_test = np.expand_dims(x_test, axis=2)
 
 # network parameters
 original_dim = x_test.shape[1]
@@ -192,15 +198,16 @@ batch_size = 128
 latent_dim = 50
 epochs = 5
 num_samples = 50
-input_shape = (original_dim,1)
+input_shape = (original_dim,)
 output_shape = (output_dim,)
 
 # VAE model = encoder + decoder
 # build encoder model
-inputs = Input(shape=(original_dim, 1), name='encoder_input')
-x1 = Conv1D(conv1_filters, 9, strides=9, activation='relu', input_shape=(None, original_dim))(inputs)
-xf = Flatten()(x1)
-x2 = Dense(dim2, activation='relu')(xf)
+inputs = Input(shape=(original_dim,), name='encoder_input')
+x1 = RotateLIDAR(num_rays, H, F, activation='relu')(inputs)
+#x1 = Conv1D(conv1_filters, 9, strides=9, activation='relu', input_shape=(None, original_dim))(inputs)
+#xf = Flatten()(x1)
+x2 = Dense(dim2, activation='relu')(x1)
 z_mean = Dense(latent_dim, name='z_mean')(x2)
 z_log_var = Dense(latent_dim, name='z_log_var')(x2)
 
