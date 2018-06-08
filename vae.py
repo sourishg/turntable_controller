@@ -1,10 +1,15 @@
+from __future__ import print_function
+
 from keras.layers import Lambda, Input, Dense, Conv1D, UpSampling1D, Flatten
 from keras.models import Model
 from keras.losses import mse, binary_crossentropy
 from keras.utils import plot_model
 from keras import backend as K
 from keras.engine.topology import Layer
+from keras.callbacks import LambdaCallback
 from keras import initializers, activations
+
+import tensorflow as tf
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -21,6 +26,7 @@ H = 9  # no of past observations
 F = 1  # no of future predictions
 
 training_data_fraction = 0.8
+tf_session = K.get_session()
 
 class RotateLIDAR(Layer):
 
@@ -30,28 +36,63 @@ class RotateLIDAR(Layer):
                  activation,
                  **kwargs):
         self.num_rays = num_rays
-        self.num_past_obs = num_past_obs
-        self.num_future_pred = num_future_pred
+        self.H = num_past_obs
+        self.F = num_future_pred
+        self.kernel_shape = (self.H * self.num_rays + self.H, self.num_rays)
         self.output_dim = num_future_pred * num_rays
         self.activation = activations.get(activation)
+
+        self.w_inits = np.random.uniform(-1, 1, ((self.num_rays - 2) * 4 * self.H + 6 * self.H)).astype('float32')
+        self.ids = []
+        idx = 0
+        shift = 0
+        for i in range(self.num_rays):
+            z = 0
+            if i > 0 and i < self.num_rays - 1:
+                z = 3*self.H
+            else:
+                z = 2*self.H
+            for j in range(z):
+                self.ids.append([shift+j,i])
+                idx = idx + 1
+            if i > 0 and i < self.num_rays - 1:
+                shift = shift + self.H
+            for j in reversed(range(self.H)):
+                self.ids.append([self.kernel_shape[0]-j-1,i])
+                idx = idx + 1
+
         super(RotateLIDAR, self).__init__(**kwargs)
 
     def build(self, input_shape):
         # Create a trainable weight variable for this layer.
-        self.kernel = self.add_weight(name='kernel', 
+        '''
+        self.kernel2 = self.add_weight(name='kernel2', 
                                       shape=(input_shape[1], self.output_dim),
                                       initializer='uniform',
                                       trainable=True)
+        '''
+        k1 = tf.SparseTensor(indices=self.ids, values=self.w_inits, dense_shape=self.kernel_shape)
+        #print K.shape(k1).eval(session=tf_session)
+        k2 = tf.sparse_tensor_to_dense(k1, validate_indices=False)
+        #print K.shape(k2).eval(session=tf_session)
+        #print K.shape(temp).eval(session=tf_session)
+        
+        self.w = K.variable(k2)
+        #self.w = K.variable(self.w_inits)
+        self.trainable_weights = [self.w]
+
         super(RotateLIDAR, self).build(input_shape)  # Be sure to call this at the end
 
     def call(self, x):
-        output = K.dot(x, self.kernel)
+        #w = tf.SparseTensor(indices=self.ids, values=self.w, dense_shape=self.kernel_shape)
+        output = K.dot(x, self.w)
         if self.activation is not None:
             output = self.activation(output)
+        K.expand_dims(output, axis=-1)
         return output
 
     def compute_output_shape(self, input_shape):
-        return (input_shape[0], self.output_dim)
+        return (input_shape[0], self.output_dim, 1)
 
 
 def prepareDataset(train_file, test_file):
@@ -63,7 +104,7 @@ def prepareDataset(train_file, test_file):
         y_raw = []
         lines = [line.rstrip('\n') for line in f1]
         for i in range(len(lines) - H - F):
-            print "preparing training data point", i
+            print("preparing training data point", i)
             x = []
             y = []
             u = []
@@ -106,7 +147,7 @@ def prepareDataset(train_file, test_file):
     y_raw = []
     lines = [line.rstrip('\n') for line in f2]
     for i in range(len(lines) - H - F):
-        print "preparing testing data point", i
+        print("preparing testing data point", i)
         x = []
         y = []
         u = []
@@ -193,11 +234,11 @@ original_dim = x_test.shape[1]
 output_dim = y_test.shape[1]
 
 conv1_filters = 10
-dim2 = 202
+dim2 = 50
 batch_size = 128
-latent_dim = 50
-epochs = 5
-num_samples = 50
+latent_dim = 20
+epochs = 15
+num_samples = 30
 input_shape = (original_dim,)
 output_shape = (output_dim,)
 
@@ -207,9 +248,12 @@ inputs = Input(shape=(original_dim,), name='encoder_input')
 x1 = RotateLIDAR(num_rays, H, F, activation='relu')(inputs)
 #x1 = Conv1D(conv1_filters, 9, strides=9, activation='relu', input_shape=(None, original_dim))(inputs)
 #xf = Flatten()(x1)
-x2 = Dense(dim2, activation='relu')(x1)
-z_mean = Dense(latent_dim, name='z_mean')(x2)
-z_log_var = Dense(latent_dim, name='z_log_var')(x2)
+#x2 = Dense(dim2, activation='relu')(x1)
+x2 = Conv1D(conv1_filters, 3, activation='relu', input_shape=(None, num_rays, 1))(x1)
+xf = Flatten()(x2)
+x3 = Dense(dim2, activation='relu')(xf)
+z_mean = Dense(latent_dim, name='z_mean')(x3)
+z_log_var = Dense(latent_dim, name='z_log_var')(x3)
 
 # use reparameterization trick to push the sampling out as input
 # note that "output_shape" isn't necessary with the TensorFlow backend
@@ -234,6 +278,7 @@ decoder.summary()
 outputs = decoder(encoder(inputs)[2])
 vae = Model(inputs, outputs, name='vae')
 
+print_weights = LambdaCallback(on_epoch_end=lambda batch, logs: print(encoder.layers[1].get_weights()))
 
 def vae_loss_function(y_true, y_pred):
     kl_loss = 1 + z_log_var - K.square(z_mean) - K.exp(z_log_var)
@@ -261,7 +306,8 @@ if __name__ == '__main__':
                 y_train,
                 epochs=epochs,
                 batch_size=batch_size,
-                validation_data=(x_val, y_val))
+                validation_data=(x_val, y_val),
+                callbacks = [print_weights])
         # serialize weights to HDF5
         vae.save_weights("vae_weights.h5")
         print("Saved weights to disk")
