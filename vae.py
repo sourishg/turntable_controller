@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Conv1D, UpSampling1D, Flatten
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D
 from keras.models import Model
 from keras.losses import mse, binary_crossentropy
 from keras.utils import plot_model
@@ -215,28 +215,28 @@ def plot_results(models,
                  num_samples=1):
     # encoder, decoder = models
     encoder, decoder = models
-    x, y = data
+    [x, u1], y = data
     theta_inc = theta_range / float(num_rays)
     for k in range(120, 300, 1):
         fig = plt.figure()
         y1 = unpack_output(y[k])
         plots = []
-        for p in range(1, F+1):
-            ax = fig.add_subplot(1, 2, p)
+        for p in range(F):
+            ax = fig.add_subplot(1, 2, p+1)
             plots.append(ax)
         
         for i in range(num_samples):
-            _, _, z = encoder.predict(np.array([x[k], ]), batch_size=batch_size)
+            _, _, z = encoder.predict([np.array([x[k],]),np.array([u1[k],])], batch_size=batch_size)
             y_pred = decoder.predict(z, batch_size=batch_size)
             #print(y_pred.shape)
             y_pred = unpack_output(y_pred[0])
-            for p in range(1, F+1):
-                plots[p-1].plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], [float(u) for u in y_pred[p-1]], 'b.')
+            for p in range(F):
+                plots[p].plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], [float(u) for u in y_pred[p]], 'b.')
             #plt.plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], y_pred[0], 'b.')
             #print("ypred:", y_pred[0])
         
-        for p in range(1, F+1):
-            plots[p-1].plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], [float(u) for u in y1[p-1]], 'r.')
+        for p in range(F):
+            plots[p].plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], [float(u) for u in y1[p]], 'r.')
         #plt.ylabel("output")
 
         '''
@@ -262,11 +262,11 @@ x_train, y_train, x_val, y_val, x_test, y_test = prepareDataset(sys.argv[1], sys
 original_dim = x_test.shape[1]
 output_dim = y_test.shape[1]
 
-conv1_filters = 10
+conv1_filters = 2 * H
 dim2 = 505
 batch_size = 128
-latent_dim = 50
-epochs = 5
+latent_dim = 20
+epochs = 10
 num_samples = 30
 input_shape = (original_dim,)
 output_shape = (output_dim,)
@@ -336,22 +336,26 @@ class RotateLIDAR(Layer):
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.output_dim)
 
+'''
 # VAE model = encoder + decoder
 # build encoder model
 inputs = Input(shape=(original_dim,), name='encoder_input')
 #x1 = RotateLIDAR(num_rays, H, F, activation='relu')(inputs)
-x11 = Reshape((original_dim, 1), input_shape=(original_dim,))(inputs)
+x1 = Reshape((original_dim, 1), input_shape=(original_dim,))(inputs)
 #x11 = Reshape((num_rays, 1), input_shape=(num_rays,))(x1)
 #x1 = Conv1D(conv1_filters, 9, strides=9, activation='relu', input_shape=(None, original_dim))(inputs)
 #xf = Flatten()(x1)
 #x2 = Dense(dim2, activation='relu')(x1)
-x2 = Conv1D(conv1_filters, H, strides=H, activation='relu', input_shape=(None, original_dim, 1))(x11)
+x2 = Conv1D(conv1_filters, H/2, strides=H/2, activation='relu', padding='same', input_shape=(None, original_dim, 1))(x1)
+x3 = MaxPooling1D(H/2, padding='same')(x2)
+x4 = Conv1D(H, 3, activation='relu', padding='same')(x3)
+x5 = MaxPooling1D(2, padding='same')(x4)
 #x2 = Conv1D(conv1_filters, 3, activation='relu', input_shape=(None, original_dim, 1))(x11)
-xf = Flatten()(x2)
-x3 = Dense(dim2, activation='relu')(xf)
-x4 = Dense(200, activation='relu')(x3)
-z_mean = Dense(latent_dim, name='z_mean')(x4)
-z_log_var = Dense(latent_dim, name='z_log_var')(x4)
+xf = Flatten()(x5)
+#x6 = Dense(dim2, activation='relu')(xf)
+#x7 = Dense(200, activation='relu')(x3)
+z_mean = Dense(latent_dim, name='z_mean')(xf)
+z_log_var = Dense(latent_dim, name='z_log_var')(xf)
 
 # use reparameterization trick to push the sampling out as input
 # note that "output_shape" isn't necessary with the TensorFlow backend
@@ -364,8 +368,13 @@ encoder.summary()
 
 # build decoder model
 latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
-y2 = Dense(dim2, activation='relu')(latent_inputs)
-outputs = Dense(output_dim, activation='relu')(y2)
+y1 = Reshape((latent_dim, 1), input_shape=(latent_dim,))(latent_inputs)
+#y2 = Dense(200, activation='relu')(latent_inputs)
+y2 = Conv1D(H, 3, activation='relu', padding='same')(y1)
+y3 = UpSampling1D(2)(y2)
+y4 = Conv1D(conv1_filters, H/2, strides=H/2, activation='relu', padding='same')(y3)
+y5 = Flatten()(y4)
+outputs = Dense(output_dim, activation='relu')(y5)
 
 # instantiate decoder model
 decoder = Model(latent_inputs, outputs, name='decoder')
@@ -375,8 +384,55 @@ decoder.summary()
 # instantiate VAE model
 outputs = decoder(encoder(inputs)[2])
 vae = Model(inputs, outputs, name='vae')
+'''
+#print_weights = LambdaCallback(on_epoch_end=lambda batch, logs: print(encoder.layers[1].get_weights()))
 
-print_weights = LambdaCallback(on_epoch_end=lambda batch, logs: print(encoder.layers[1].get_weights()))
+if not trained:
+    u_train = np.tile(x_train[...,(H * num_rays):], (1, num_rays))
+    x_tr = x_train[...,:(H * num_rays)]
+
+    u_val = np.tile(x_val[...,(H * num_rays):], (1, num_rays))
+    x_v = x_val[...,:(H * num_rays)]
+
+u_test = np.tile(x_test[...,(H * num_rays):], (1, num_rays))
+x_te = x_test[...,:(H * num_rays)]
+
+input_rays_dim = H * num_rays
+input_control_dim = H * num_rays
+output_dim = F * num_rays
+latent_dim = 100
+
+input_rays = Input(shape=(input_rays_dim,))
+input_controls = Input(shape=(input_control_dim,))
+inputs = [input_rays, input_controls]
+
+x1 = Dense(input_rays_dim, activation='relu')(input_rays)
+x2 = Multiply()([x1, input_controls])
+x3 = Reshape((input_rays_dim, 1), input_shape=(input_rays_dim,))(x2)
+x4 = Conv1D(16, 3, activation='relu', padding='same', input_shape=(None, input_rays_dim, 1))(x3)
+x5 = MaxPooling1D(2, padding='same')(x4)
+x6 = Conv1D(8, 3, activation='relu', padding='same')(x5)
+x7 = MaxPooling1D(2, padding='same')(x6)
+x8 = Flatten()(x7)
+z_mean = Dense(latent_dim, name='z_mean')(x8)
+z_log_var = Dense(latent_dim, name='z_log_var')(x8)
+z = Lambda(sampling, name='z')([z_mean, z_log_var])
+encoder = Model(inputs, [z_mean, z_log_var, z], name='encoder')
+encoder.summary()
+
+latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
+y1 = Reshape((latent_dim, 1), input_shape=(latent_dim,))(latent_inputs)
+y2 = Conv1D(8, 3, activation='relu', padding='same')(y1)
+y3 = UpSampling1D(2)(y2)
+y4 = Conv1D(16, 3, activation='relu', padding='same')(y3)
+y5 = Flatten()(y4)
+outputs = Dense(output_dim, activation='relu')(y5)
+
+decoder = Model(latent_inputs, outputs, name='decoder')
+decoder.summary()
+
+outputs = decoder(encoder(inputs)[2])
+vae = Model(inputs, outputs, name='vae')
 
 def vae_loss_function(y_true, y_pred):
     kl_loss = 1 + z_log_var - K.square(z_mean) - K.exp(z_log_var)
@@ -384,12 +440,11 @@ def vae_loss_function(y_true, y_pred):
     kl_loss *= -0.5
     mse_loss = mse(y_true, y_pred)
     mse_loss *= original_dim
-    return K.mean(mse_loss + kl_loss)
-
+    return mse_loss + kl_loss
 
 if __name__ == '__main__':
     models = (encoder, decoder)
-    test_data = (x_test, y_test)
+    test_data = ([x_te, u_test], y_test)
 
     if trained:
         # load weights into new model
@@ -400,12 +455,11 @@ if __name__ == '__main__':
     else:
         vae.compile(optimizer='adam', loss=vae_loss_function)
         vae.summary()
-        vae.fit(x_train,
+        vae.fit([x_tr, u_train],
                 y_train,
                 epochs=epochs,
                 batch_size=batch_size,
-                validation_data=(x_val, y_val),
-                callbacks = [print_weights])
+                validation_data=([x_v, u_val], y_val))
         # serialize weights to HDF5
         vae.save_weights("vae_weights.h5")
         print("Saved weights to disk")
