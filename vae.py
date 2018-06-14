@@ -22,94 +22,28 @@ theta_range = np.deg2rad(120.0)
 num_rays = 100
 trained = True
 
-H = 8  # no of past observations
-F = 4  # no of future predictions
+H = 5  # no of past observations
+F = 5  # no of future predictions
 
 training_data_fraction = 0.8
 tf_session = K.get_session()
 
-def prepareDatasetOld(train_file, test_file):
-    x_train, x_val, y_train, y_val, x_test, y_test = [], [], [], [], [], []
-      
-    if not trained:
-        f1 = open(train_file, "r")
-        x_raw = []
-        y_raw = []
-        lines = [line.rstrip('\n') for line in f1]
-        for i in range(len(lines)-H-F):
-            print("preparing training data point", i)
-            x = []
-            y = []
-            u = []
-            for j in range(H):
-                parts = lines[i+j].split(" ")
-                for k in range(num_rays):
-                    x.append(float(parts[k+2]))
-                u.append(float(parts[0]))
-            for j in range(F):
-                parts = lines[i+j+H].split(" ")
-                for k in range(num_rays):
-                    y.append(float(parts[k+2]))
-            x = x + u
-            x_raw.append(x)
-            y_raw.append(y)
-
-        x = np.asarray(x_raw)
-        y = np.asarray(y_raw)
-
-        n = len(lines)-H-F
-        n_train_samples = int(training_data_fraction * n)
-        n_val_samples = n - n_train_samples
-
-        training_idx = np.random.randint(x.shape[0], size=n_train_samples)
-        val_idx = np.random.randint(x.shape[0], size=n_val_samples)
-        
-        x_train, x_val = x[training_idx,:], x[val_idx,:]
-        y_train, y_val = y[training_idx,:], y[val_idx,:]
-
-        print("Prepared training dataset!")
-
-    f2 = open(test_file, "r")
-    x_raw = []
-    y_raw = []
-    lines = [line.rstrip('\n') for line in f2]
-    for i in range(len(lines)-H-F):
-        print("preparing testing data point", i)
-        x = []
-        y = []
-        u = []
-        for j in range(H):
-            parts = lines[i+j].split(" ")
-            for k in range(num_rays):
-                x.append(float(parts[k+2]))
-            u.append(float(parts[0]))
-        for j in range(F):
-            parts = lines[i+j+H].split(" ")
-            for k in range(num_rays):
-                y.append(float(parts[k+2]))
-        x = x + u
-        x_raw.append(x)
-        y_raw.append(y)
-
-    x_test = np.asarray(x_raw)
-    y_test = np.asarray(y_raw)    
-
-    return x_train, y_train, x_val, y_val, x_test, y_test
-
 def prepareDataset(train_file, test_file):
     x_train, x_val, y_train, y_val, x_test, y_test = [], [], [], [], [], []
+    u_train, u_val, u_test = [], [], []
 
     if not trained:
         f1 = open(train_file, "r")
         x_raw = []
         y_raw = []
+        u_raw = []
         lines = [line.rstrip('\n') for line in f1]
         for i in range(len(lines) - H - F):
             print("preparing training data point", i)
             x = []
             y = []
             u = []
-            for j in reversed(range(H)):
+            for j in range(H):
                 parts = lines[i + j].split(" ")
                 #for k in range(num_rays):
                 #    x.append(float(parts[k + 2]))
@@ -120,10 +54,11 @@ def prepareDataset(train_file, test_file):
                 #for k in range(num_rays):
                 #    y.append(float(parts[k + 2]))
                 y.append(parts[2:num_rays+2:1])
+                u.append(float(parts[0]))
             
             x = np.asarray(x)
-            u = np.asarray([u])
-            x = np.concatenate((x, u.T), axis=1)
+            # u = np.asarray([u])
+            # x = np.concatenate((x, u.T), axis=1)
             x = x.flatten('F')
 
             y = np.asarray(y)
@@ -131,9 +66,11 @@ def prepareDataset(train_file, test_file):
 
             x_raw.append(x)
             y_raw.append(y)
+            u_raw.append(u)
 
         x = np.asarray(x_raw)
         y = np.asarray(y_raw)
+        u = np.asarray(u_raw)
 
         n = len(lines) - H - F
         n_train_samples = int(training_data_fraction * n)
@@ -144,19 +81,21 @@ def prepareDataset(train_file, test_file):
 
         x_train, x_val = x[training_idx, :], x[val_idx, :]
         y_train, y_val = y[training_idx, :], y[val_idx, :]
+        u_train, u_val = u[training_idx, :], u[val_idx, :]
 
         print("Prepared training dataset!")
 
     f2 = open(test_file, "r")
     x_raw = []
     y_raw = []
+    u_raw = []
     lines = [line.rstrip('\n') for line in f2]
     for i in range(len(lines) - H - F):
         print("preparing testing data point", i)
         x = []
         y = []
         u = []
-        for j in reversed(range(H)):
+        for j in range(H):
             parts = lines[i + j].split(" ")
             #for k in range(num_rays):
             #    x.append(float(parts[k + 2]))
@@ -167,10 +106,11 @@ def prepareDataset(train_file, test_file):
             #for k in range(num_rays):
             #    y.append(float(parts[k + 2]))
             y.append(parts[2:num_rays+2:1])
+            u.append(float(parts[0]))
 
         x = np.asarray(x)
-        u = np.asarray([u])
-        x = np.concatenate((x, u.T), axis=1)
+        #u = np.asarray([u])
+        #x = np.concatenate((x, u.T), axis=1)
         x = x.flatten('F')
 
         y = np.asarray(y)
@@ -178,13 +118,15 @@ def prepareDataset(train_file, test_file):
         
         x_raw.append(x)
         y_raw.append(y)
+        u_raw.append(u)
 
     x_test = np.asarray(x_raw)
     y_test = np.asarray(y_raw)
+    u_test = np.asarray(u_raw)
 
     print("Prepared testing dataset!")
 
-    return x_train, y_train, x_val, y_val, x_test, y_test
+    return x_train, y_train, x_val, y_val, x_test, y_test, u_train, u_val, u_test
 
 
 # reparameterization trick
@@ -222,7 +164,7 @@ def plot_results(models,
         y1 = unpack_output(y[k])
         plots = []
         for p in range(F):
-            ax = fig.add_subplot(2, 2, p+1)
+            ax = fig.add_subplot(2, F/2 + 1, p+1)
             plots.append(ax)
         
         for i in range(num_samples):
@@ -250,7 +192,11 @@ def plot_results(models,
         plt.show()
 
 
-x_train, y_train, x_val, y_val, x_test, y_test = prepareDataset(sys.argv[1], sys.argv[2])
+x_train, y_train, x_val, y_val, x_test, y_test, u_train, u_val, u_test = prepareDataset(sys.argv[1], sys.argv[2])
+if not trained:
+    u_train = np.tile(u_train[...,:], (1, num_rays))
+    u_val = np.tile(u_val[...,:], (1, num_rays))
+u_test = np.tile(u_test[...,:], (1, num_rays))
 #x_train, y_train, x_val, y_val, x_test, y_test = prepareDatasetOld(sys.argv[1], sys.argv[2])
 #print(x_train.shape, x_test.shape, x_val.shape, y_train.shape)
 
@@ -387,44 +333,36 @@ vae = Model(inputs, outputs, name='vae')
 '''
 #print_weights = LambdaCallback(on_epoch_end=lambda batch, logs: print(encoder.layers[1].get_weights()))
 
-if not trained:
-    u_train = np.tile(x_train[...,(H * num_rays):], (1, num_rays))
-    x_tr = x_train[...,:(H * num_rays)]
-
-    u_val = np.tile(x_val[...,(H * num_rays):], (1, num_rays))
-    x_v = x_val[...,:(H * num_rays)]
-
-u_test = np.tile(x_test[...,(H * num_rays):], (1, num_rays))
-x_te = x_test[...,:(H * num_rays)]
-
 input_rays_dim = H * num_rays
-input_control_dim = H * num_rays
+input_control_dim = (H + F) * num_rays
 output_dim = F * num_rays
-latent_dim = 100
-epochs = 15
+latent_dim = output_dim / 10
+epochs = 10
 
 input_rays = Input(shape=(input_rays_dim,))
 input_controls = Input(shape=(input_control_dim,))
 inputs = [input_rays, input_controls]
 
-x1 = Dense(input_rays_dim, activation='softplus')(input_rays)
+x1 = Dense(input_control_dim, activation='softplus')(input_rays)
 x2 = Multiply()([x1, input_controls])
-x3 = Reshape((input_rays_dim, 1), input_shape=(input_rays_dim,))(x2)
-x4 = Conv1D(16, 3, activation='relu', padding='same', input_shape=(None, input_rays_dim, 1))(x3)
+x3 = Reshape((input_control_dim, 1), input_shape=(input_control_dim,))(x2)
+x4 = Conv1D(16, 3, activation='relu', padding='same', input_shape=(None, input_control_dim, 1))(x3)
 x5 = MaxPooling1D(2, padding='same')(x4)
 x6 = Conv1D(8, 3, activation='relu', padding='same')(x5)
 x7 = MaxPooling1D(2, padding='same')(x6)
 x8 = Conv1D(4, 3, activation='relu', padding='same')(x7)
 x9 = MaxPooling1D(2, padding='same')(x8)
 x10 = Flatten()(x9)
-z_mean = Dense(latent_dim, name='z_mean')(x10)
-z_log_var = Dense(latent_dim, name='z_log_var')(x10)
+x11 = Dense(latent_dim, activation='softplus')(x10)
+z_mean = Dense(latent_dim, name='z_mean')(x11)
+z_log_var = Dense(latent_dim, name='z_log_var')(x11)
 z = Lambda(sampling, name='z')([z_mean, z_log_var])
 encoder = Model(inputs, [z_mean, z_log_var, z], name='encoder')
 encoder.summary()
 
 latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
-y1 = Reshape((latent_dim, 1), input_shape=(latent_dim,))(latent_inputs)
+y0 = Dense(latent_dim, activation='softplus')(latent_inputs)
+y1 = Reshape((latent_dim, 1), input_shape=(latent_dim,))(y0)
 y2 = Conv1D(4, 3, activation='relu', padding='same')(y1)
 y3 = UpSampling1D(2)(y2)
 y4 = Conv1D(8, 3, activation='relu', padding='same')(y3)
@@ -449,7 +387,7 @@ def vae_loss_function(y_true, y_pred):
 
 if __name__ == '__main__':
     models = (encoder, decoder)
-    test_data = ([x_te, u_test], y_test)
+    test_data = ([x_test, u_test], y_test)
 
     if trained:
         # load weights into new model
@@ -460,11 +398,11 @@ if __name__ == '__main__':
     else:
         vae.compile(optimizer='adam', loss=vae_loss_function)
         vae.summary()
-        vae.fit([x_tr, u_train],
+        vae.fit([x_train, u_train],
                 y_train,
                 epochs=epochs,
                 batch_size=batch_size,
-                validation_data=([x_v, u_val], y_val))
+                validation_data=([x_val, u_val], y_val))
         # serialize weights to HDF5
         vae.save_weights("vae_weights.h5")
         print("Saved weights to disk")
