@@ -8,14 +8,15 @@ import sys
 # Constants
 PI = 3.14159
 num_obstacles = 10
-world_samples = 10  # no of random worlds
-control_samples = 15  # no of observations in each world
+world_samples = 15  # no of random worlds
+control_samples = 20  # no of observations in each world
 
 # Control params
-max_angular_velocity = 2.0  # control input sampled from [-max, max]
+max_angular_velocity = 1.0  # control input sampled from [-max, max]
 init_theta = 0.0  # initial state
 dt = 0.1  # time increment
 T = 10  # total time for one control input
+M = np.linspace(-max_angular_velocity, max_angular_velocity, num=20)
 
 # LIDAR params
 lidar_pos = (0.0, 0.0, 0.2)
@@ -133,18 +134,19 @@ if __name__ == '__main__':
     for z in range(world_samples):
         print "Recording world", z
         # Sample control inputs
-        u = np.random.uniform(-max_angular_velocity, max_angular_velocity, control_samples)
-        for i in range(len(u)):
+        #u = np.random.uniform(-max_angular_velocity, max_angular_velocity, control_samples)
+        control_idx = np.random.randint(M.shape[0], size=control_samples)
+        for idx in control_idx:
             # data stored as: theta_dot, theta, range values...
             # for each world there are "control_samples" number of rows
             # so total rows = world_samples * control_samples * T
             # print("Recording datapoint %i\n" % i)
             for j in range(T):
                 ranges = getRangeReading(init_theta)
-                f.write("%f %f " % (u[i], init_theta))
+                f.write("%f %f " % (M[idx], init_theta))
                 for k in range(len(ranges)):
                     f.write("%f " % ranges[k])
                 f.write("\n")
-                init_theta = normAngle(init_theta + u[i] * dt)
+                init_theta = normAngle(init_theta + M[idx] * dt)
         # change the world
         repositionObstacles(UIDs)
