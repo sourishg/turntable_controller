@@ -20,10 +20,10 @@ import sys
 # Constants and params
 theta_range = np.deg2rad(120.0)
 num_rays = 100
-trained = False
+trained = True
 
 H = 8  # no of past observations
-F = 2  # no of future predictions
+F = 4  # no of future predictions
 
 training_data_fraction = 0.8
 tf_session = K.get_session()
@@ -222,7 +222,7 @@ def plot_results(models,
         y1 = unpack_output(y[k])
         plots = []
         for p in range(F):
-            ax = fig.add_subplot(1, 2, p+1)
+            ax = fig.add_subplot(2, 2, p+1)
             plots.append(ax)
         
         for i in range(num_samples):
@@ -265,7 +265,7 @@ output_dim = y_test.shape[1]
 conv1_filters = 2 * H
 dim2 = 505
 batch_size = 128
-latent_dim = 20
+latent_dim = 40
 epochs = 10
 num_samples = 30
 input_shape = (original_dim,)
@@ -401,32 +401,37 @@ input_rays_dim = H * num_rays
 input_control_dim = H * num_rays
 output_dim = F * num_rays
 latent_dim = 100
+epochs = 15
 
 input_rays = Input(shape=(input_rays_dim,))
 input_controls = Input(shape=(input_control_dim,))
 inputs = [input_rays, input_controls]
 
-x1 = Dense(input_rays_dim, activation='relu')(input_rays)
+x1 = Dense(input_rays_dim, activation='softplus')(input_rays)
 x2 = Multiply()([x1, input_controls])
 x3 = Reshape((input_rays_dim, 1), input_shape=(input_rays_dim,))(x2)
 x4 = Conv1D(16, 3, activation='relu', padding='same', input_shape=(None, input_rays_dim, 1))(x3)
 x5 = MaxPooling1D(2, padding='same')(x4)
 x6 = Conv1D(8, 3, activation='relu', padding='same')(x5)
 x7 = MaxPooling1D(2, padding='same')(x6)
-x8 = Flatten()(x7)
-z_mean = Dense(latent_dim, name='z_mean')(x8)
-z_log_var = Dense(latent_dim, name='z_log_var')(x8)
+x8 = Conv1D(4, 3, activation='relu', padding='same')(x7)
+x9 = MaxPooling1D(2, padding='same')(x8)
+x10 = Flatten()(x9)
+z_mean = Dense(latent_dim, name='z_mean')(x10)
+z_log_var = Dense(latent_dim, name='z_log_var')(x10)
 z = Lambda(sampling, name='z')([z_mean, z_log_var])
 encoder = Model(inputs, [z_mean, z_log_var, z], name='encoder')
 encoder.summary()
 
 latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
 y1 = Reshape((latent_dim, 1), input_shape=(latent_dim,))(latent_inputs)
-y2 = Conv1D(8, 3, activation='relu', padding='same')(y1)
+y2 = Conv1D(4, 3, activation='relu', padding='same')(y1)
 y3 = UpSampling1D(2)(y2)
-y4 = Conv1D(16, 3, activation='relu', padding='same')(y3)
-y5 = Flatten()(y4)
-outputs = Dense(output_dim, activation='relu')(y5)
+y4 = Conv1D(8, 3, activation='relu', padding='same')(y3)
+y5 = UpSampling1D(2)(y4)
+y6 = Conv1D(16, 3, activation='relu', padding='same')(y5)
+y7 = Flatten()(y6)
+outputs = Dense(output_dim, activation='relu')(y7)
 
 decoder = Model(latent_inputs, outputs, name='decoder')
 decoder.summary()
