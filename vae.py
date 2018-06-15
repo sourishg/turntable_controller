@@ -20,10 +20,10 @@ import sys
 # Constants and params
 theta_range = np.deg2rad(120.0)
 num_rays = 100
-trained = True
+trained = False
 
-H = 5  # no of past observations
-F = 5  # no of future predictions
+H = 6  # no of past observations
+F = 4  # no of future predictions
 
 training_data_fraction = 0.8
 tf_session = K.get_session()
@@ -282,56 +282,8 @@ class RotateLIDAR(Layer):
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.output_dim)
 
-'''
 # VAE model = encoder + decoder
 # build encoder model
-inputs = Input(shape=(original_dim,), name='encoder_input')
-#x1 = RotateLIDAR(num_rays, H, F, activation='relu')(inputs)
-x1 = Reshape((original_dim, 1), input_shape=(original_dim,))(inputs)
-#x11 = Reshape((num_rays, 1), input_shape=(num_rays,))(x1)
-#x1 = Conv1D(conv1_filters, 9, strides=9, activation='relu', input_shape=(None, original_dim))(inputs)
-#xf = Flatten()(x1)
-#x2 = Dense(dim2, activation='relu')(x1)
-x2 = Conv1D(conv1_filters, H/2, strides=H/2, activation='relu', padding='same', input_shape=(None, original_dim, 1))(x1)
-x3 = MaxPooling1D(H/2, padding='same')(x2)
-x4 = Conv1D(H, 3, activation='relu', padding='same')(x3)
-x5 = MaxPooling1D(2, padding='same')(x4)
-#x2 = Conv1D(conv1_filters, 3, activation='relu', input_shape=(None, original_dim, 1))(x11)
-xf = Flatten()(x5)
-#x6 = Dense(dim2, activation='relu')(xf)
-#x7 = Dense(200, activation='relu')(x3)
-z_mean = Dense(latent_dim, name='z_mean')(xf)
-z_log_var = Dense(latent_dim, name='z_log_var')(xf)
-
-# use reparameterization trick to push the sampling out as input
-# note that "output_shape" isn't necessary with the TensorFlow backend
-z = Lambda(sampling, output_shape=(latent_dim,), name='z')([z_mean, z_log_var])
-
-# instantiate encoder model
-encoder = Model(inputs, [z_mean, z_log_var, z], name='encoder')
-encoder.summary()
-# plot_model(encoder, to_file='vae_encoder.png', show_shapes=True)
-
-# build decoder model
-latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
-y1 = Reshape((latent_dim, 1), input_shape=(latent_dim,))(latent_inputs)
-#y2 = Dense(200, activation='relu')(latent_inputs)
-y2 = Conv1D(H, 3, activation='relu', padding='same')(y1)
-y3 = UpSampling1D(2)(y2)
-y4 = Conv1D(conv1_filters, H/2, strides=H/2, activation='relu', padding='same')(y3)
-y5 = Flatten()(y4)
-outputs = Dense(output_dim, activation='relu')(y5)
-
-# instantiate decoder model
-decoder = Model(latent_inputs, outputs, name='decoder')
-decoder.summary()
-# plot_model(decoder, to_file='vae_decoder.png', show_shapes=True)
-
-# instantiate VAE model
-outputs = decoder(encoder(inputs)[2])
-vae = Model(inputs, outputs, name='vae')
-'''
-#print_weights = LambdaCallback(on_epoch_end=lambda batch, logs: print(encoder.layers[1].get_weights()))
 
 input_rays_dim = H * num_rays
 input_control_dim = (H + F) * num_rays
@@ -405,6 +357,7 @@ if __name__ == '__main__':
                 validation_data=([x_val, u_val], y_val))
         # serialize weights to HDF5
         vae.save_weights("vae_weights.h5")
+        vae.save("vae_model.h5")
         print("Saved weights to disk")
 
     # plot_model(vae, to_file='vae.png', show_shapes=True)
