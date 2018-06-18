@@ -157,3 +157,12 @@ class VAE:
             '''
 
             plt.show()
+
+    def predict(self, x, u):
+        y_pred = []
+        for i in range(self.num_samples):
+            _, _, z = self.encoder.predict([np.array([x,]),np.array([u,])], batch_size=self.batch_size)
+            y_pred.append(self.decoder.predict(z, batch_size=self.batch_size)[0])
+        y_pred = np.asarray(y_pred)
+        y = np.mean(y_pred, axis=0)
+        return self._unpack_output(y)
