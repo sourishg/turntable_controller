@@ -115,7 +115,7 @@ def init_history():
         ranges = get_range_reading(init_theta)
         prev_ranges.append(ranges)
 
-vae = load_model('vae_model.h5')
+vae = load_model('vae_model.h5', custom_objects={'vae_loss_function': vae_loss_function})
 print('Loaded VAE model!')
 
 create_random_world()
