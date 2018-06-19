@@ -135,8 +135,8 @@ class VAE:
                 plots.append(ax)
             
             for i in range(self.num_samples):
-                _, _, z = self.encoder.predict([np.array([x_test[k],]),np.array([u_test[k],])], batch_size=self.batch_size)
-                y_pred = self.decoder.predict(z, batch_size=self.batch_size)
+                _, _, z = self.encoder.predict([np.array([x_test[k],]),np.array([u_test[k],])], batch_size=1)
+                y_pred = self.decoder.predict(z, batch_size=1)
                 #print(y_pred.shape)
                 y_pred = self._unpack_output(y_pred[0])
                 for p in range(self.F):
@@ -161,8 +161,8 @@ class VAE:
     def predict(self, x, u):
         y_pred = []
         for i in range(self.num_samples):
-            _, _, z = self.encoder.predict([np.array([x,]),np.array([u,])], batch_size=self.batch_size)
-            y_pred.append(self.decoder.predict(z, batch_size=self.batch_size)[0])
+            _, _, z = self.encoder.predict([np.array([x,]),np.array([u,])], batch_size=1)
+            y_pred.append(self.decoder.predict(z, batch_size=1)[0])
         y_pred = np.asarray(y_pred)
         y = np.mean(y_pred, axis=0)
         return self._unpack_output(y)
