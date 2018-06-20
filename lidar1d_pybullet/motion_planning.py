@@ -52,6 +52,22 @@ def norm_angle(theta):
         theta = theta + 2 * PI
     return theta
 
+def create_world():
+    # Create ground plane
+    p.createCollisionShape(p.GEOM_PLANE)
+    p.createMultiBody(0, 0)
+
+    obstCylinderId = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.3)
+    obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2.2, -2, 0], baseOrientation=[0, 0, 0, 1])
+    obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2.3, -1.5, 0], baseOrientation=[0, 0, 0, 1])
+    obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2.4, -1.0, 0], baseOrientation=[0, 0, 0, 1])
+    obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[1.9, -0.5, 0], baseOrientation=[0, 0, 0, 1])
+    obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2, 0, 0], baseOrientation=[0, 0, 0, 1])
+    obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2.5, 0.5, 0], baseOrientation=[0, 0, 0, 1])
+    obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2, 1.0, 0], baseOrientation=[0, 0, 0, 1])
+    obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2, 1.5, 0], baseOrientation=[0, 0, 0, 1])
+    obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2, 2, 0], baseOrientation=[0, 0, 0, 1])
+
 def create_random_world():
     # Create ground plane
     p.createCollisionShape(p.GEOM_PLANE)
@@ -125,7 +141,10 @@ def next_control(model):
         u = np.append(u, np.full(F, M[i]))
         u = np.tile(u, num_rays)
         y = model.predict(x, u)
+        
         d = y[F-1][num_rays/2]
+        #d = np.amin(y[F-1][y[F-1] > 0])
+
         print("u = %f, d = %f" % (M[i], d))
         distances.append(d)
         y_pred.append(y)
@@ -146,8 +165,9 @@ if __name__ == '__main__':
     p.setGravity(0, 0, -9.8)
     p.setRealTimeSimulation(1)
 
-    create_random_world()
-    vae = VAE(num_rays, theta_range, H, F, num_samples)
+    #create_random_world()
+    create_world()
+    vae = VAE(num_rays, H, F, num_samples)
     vae.load_weights("vae_weights.h5")
     init_history()
     for i in range(10):

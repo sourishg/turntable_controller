@@ -6,7 +6,7 @@ import sys
 theta_range = np.deg2rad(120.0)
 num_rays = 100
 
-trained = False
+trained = True
 H = 8  # no of past observations
 F = 4  # no of future predictions
 num_samples = 30
@@ -119,7 +119,7 @@ if __name__ == '__main__':
         u_val = np.tile(u_val[...,:], (1, num_rays))
     u_test = np.tile(u_test[...,:], (1, num_rays))
     
-    vae = VAE(num_rays, theta_range, H, F, num_samples)
+    vae = VAE(num_rays, H, F, num_samples)
 
     if trained:
         # load weights into new model

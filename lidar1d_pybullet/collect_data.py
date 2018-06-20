@@ -80,8 +80,8 @@ def repositionObstacles(UIDs):
 
 def createWorld():
     '''
-  Create a fixed world
-  '''
+    Create a fixed world
+    '''
     obstCylinderId = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.3)
     obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2.2, 1.2, 0], baseOrientation=[0, 0, 0, 1])
     obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[3, 1, 0], baseOrientation=[0, 0, 0, 1])

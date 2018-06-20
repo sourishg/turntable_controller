@@ -18,12 +18,10 @@ import sys
 class VAE:
     def __init__(self,
                  num_rays,
-                 theta_range,
                  H, F,
                  var_samples, 
                  epochs=10, batch_size=128):
         self.num_rays = num_rays
-        self.theta_range = theta_range
         self.H = H
         self.F = F
         self.num_samples = var_samples
@@ -125,7 +123,6 @@ class VAE:
         print("Saved weights!")
 
     def plot_results(self, x_test, u_test, y_test):
-        theta_inc = self.theta_range / float(self.num_rays)
         for k in range(y_test.shape[0]):
             fig = plt.figure()
             y1 = self._unpack_output(y_test[k])
@@ -140,12 +137,12 @@ class VAE:
                 #print(y_pred.shape)
                 y_pred = self._unpack_output(y_pred[0])
                 for p in range(self.F):
-                    plots[p].plot([j * np.rad2deg(theta_inc) for j in range(self.num_rays)], [float(u) for u in y_pred[p]], 'b.')
+                    plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y_pred[p]], 'b.')
                 #plt.plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], y_pred[0], 'b.')
                 #print("ypred:", y_pred[0])
             
             for p in range(self.F):
-                plots[p].plot([j * np.rad2deg(theta_inc) for j in range(self.num_rays)], [float(u) for u in y1[p]], 'r.')
+                plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y1[p]], 'r.')
             #plt.ylabel("output")
 
             '''
