@@ -6,6 +6,9 @@ import cv2
 
 from depth_camera import DepthCamera
 
+cam_width = 640
+cam_height = 480
+
 if __name__ == '__main__':
     cam = DepthCamera(60)
 
@@ -13,7 +16,7 @@ if __name__ == '__main__':
     fig = plt.figure()
     ax = fig.add_subplot(111)
     ax.set_ylim(ymin=0, ymax=10)
-    scan_plt, = ax.plot([i for i in range(640)], [0 for i in range(640)], 'b-')
+    scan_plt, = ax.plot([i for i in range(cam_width)], [0 for i in range(cam_width)], 'b-')
 
     while (1):
         rgb = cam.get_depth_raw()
