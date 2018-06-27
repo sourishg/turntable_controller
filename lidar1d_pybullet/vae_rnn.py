@@ -1,12 +1,12 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Flatten, LSTM
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Flatten, LSTM, SimpleRNN, Bidirectional
 from keras.models import Model
 from keras.losses import mse
 from keras import backend as K
 from keras.engine.topology import Layer
 from keras.callbacks import LambdaCallback
-from keras import activations
+from keras import activations, initializers
 
 import tensorflow as tf
 
@@ -33,7 +33,7 @@ class DeepVAE:
         kl_loss = K.sum(kl_loss, axis=-1)
         kl_loss *= -0.5
         mse_loss = mse(y_true, y_pred)
-        mse_loss *= (self.H * self.num_rays)
+        #mse_loss *= (self.H)
         return K.mean(mse_loss + kl_loss)
 
     def _sampling(self, args):
@@ -54,18 +54,35 @@ class DeepVAE:
     def _unpack_output(self, y):
         return np.reshape(y, (self.F, self.num_rays), order='F')
 
+    def _cum2orig(self, y):
+        y_new = []
+        for i in range(self.num_rays):
+            if i == 0:
+                y_new.append(y[i])
+            else:
+                y_new.append(y[i]-y[i-1])
+        return np.array(y_new)
+
     def _build_model(self):
         input_shape = (self.H, self.num_rays)
         input_control_dim = self.F
         output_dim = self.F * self.num_rays
-        latent_dim = 13
+        latent_dim = 100
 
         input_rays = Input(shape=input_shape)
         input_controls = Input(shape=(input_control_dim,))
         inputs = [input_rays, input_controls]
 
-        x1 = LSTM(self.num_rays/2, input_shape=input_shape, dropout=0.8, return_sequences=True)(input_rays)
-        x2 = LSTM(latent_dim * 2, dropout=0.8, return_sequences=False)(x1)
+        
+        x1 = Bidirectional(SimpleRNN(self.num_rays/2, input_shape=input_shape,
+                                kernel_initializer=initializers.RandomNormal(stddev=0.001),
+                                recurrent_initializer=initializers.Identity(gain=1.0),
+                                activation='sigmoid', dropout=0.8, return_sequences=False))(input_rays)
+        #x2 = SimpleRNN(self.num_rays/2, dropout=0.8, return_sequences=False)(x1)
+        
+        #x1 = Reshape((self.H * self.num_rays,), input_shape=input_shape)(input_rays)
+        x2 = Dense(self.H * self.num_rays / 2, activation='relu')(x1)
+        #x3 = Dense(self.H * self.num_rays / 2, activation='relu')(x2)
         self.z_mean = Dense(latent_dim, name='z_mean')(x2)
         self.z_log_var = Dense(latent_dim, name='z_log_var')(x2)
         self.z = Lambda(self._sampling, name='z')([self.z_mean, self.z_log_var])
@@ -74,8 +91,8 @@ class DeepVAE:
         self.encoder.summary()
 
         latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
-        y0 = Dense(latent_dim * 2, activation='relu')(latent_inputs)
-        y1 = Dense(self.num_rays/2, activation='relu')(y0)
+        y0 = Dense(self.H * self.num_rays / 2, activation='sigmoid')(latent_inputs)
+        y1 = Dense(self.H * self.num_rays / 2, activation='relu')(y0)
         outputs = Dense(output_dim)(y1)
 
         self.decoder = Model(latent_inputs, outputs, name='decoder')
@@ -89,13 +106,13 @@ class DeepVAE:
     def load_weights(self, filename):
         self._build_model()
         self.vae.load_weights(filename)
-        self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
+        self.vae.compile(optimizer='rmsprop', loss=self._vae_loss_function)
         self.vae.summary()
         print("Loaded weights!")
 
     def fit(self, x_train, x_val, y_train, y_val, u_train, u_val):
         self._build_model()
-        self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
+        self.vae.compile(optimizer='rmsprop', loss=self._vae_loss_function)
         self.vae.summary()
         self.vae.fit([x_train, u_train],
                 y_train,
@@ -121,12 +138,14 @@ class DeepVAE:
                 #print(y_pred.shape)
                 y_pred = self._unpack_output(y_pred[0])
                 for p in range(self.F):
-                    plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y_pred[p]], 'b.')
+                    y_pred_orig = self._cum2orig(y_pred[p])
+                    plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y_pred_orig], 'b.')
                 #plt.plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], y_pred[0], 'b.')
                 #print("ypred:", y_pred[0])
             
             for p in range(self.F):
-                plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y1[p]], 'r.')
+                y_orig = self._cum2orig(y1[p])
+                plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y_orig], 'r.')
             #plt.ylabel("output")
 
             '''
