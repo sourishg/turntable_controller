@@ -8,8 +8,8 @@ import sys
 # Constants
 PI = 3.14159
 num_obstacles = 10
-world_samples = 15  # no of random worlds
-control_samples = 20  # no of observations in each world
+world_samples = 300  # no of random worlds
+control_samples = 10  # no of observations in each world
 
 # Control params
 max_angular_velocity = 1.0  # control input sampled from [-max, max]
@@ -54,6 +54,9 @@ def createRandomWorld():
     y2 = np.random.uniform(eps, max_y, num_obstacles / 2)
     y = np.concatenate((y1, y2), axis=0)
 
+    np.random.shuffle(x)
+    np.random.shuffle(y)
+
     obstCylinderId = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.2)
     UIDs = []
     for i in range(x.shape[0]):
@@ -72,6 +75,10 @@ def repositionObstacles(UIDs):
     y1 = np.random.uniform(-max_y, -eps, num_obstacles / 2)
     y2 = np.random.uniform(eps, max_y, num_obstacles / 2)
     y = np.concatenate((y1, y2), axis=0)
+
+    np.random.shuffle(x)
+    np.random.shuffle(y)
+
     i = 0
     for id in UIDs:
         p.resetBasePositionAndOrientation(id, posObj=[x[i], y[i], 0], ornObj=[0, 0, 0, 1])
@@ -143,7 +150,7 @@ if __name__ == '__main__':
             # print("Recording datapoint %i\n" % i)
             for j in range(T):
                 ranges = getRangeReading(init_theta)
-                f.write("%f %f " % (M[idx], init_theta))
+                f.write("%f %f " % (init_theta, M[idx]))
                 for k in range(len(ranges)):
                     f.write("%f " % ranges[k])
                 f.write("\n")
