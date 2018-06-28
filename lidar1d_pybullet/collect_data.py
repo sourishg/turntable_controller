@@ -8,8 +8,8 @@ import sys
 # Constants
 PI = 3.14159
 num_obstacles = 10
-world_samples = 300  # no of random worlds
-control_samples = 10  # no of observations in each world
+world_samples = 10  # no of random worlds
+control_samples = 50  # no of observations in each world
 
 # Control params
 max_angular_velocity = 1.0  # control input sampled from [-max, max]
@@ -142,6 +142,7 @@ if __name__ == '__main__':
         print "Recording world", z
         # Sample control inputs
         #u = np.random.uniform(-max_angular_velocity, max_angular_velocity, control_samples)
+        init_theta = 0.0
         control_idx = np.random.randint(M.shape[0], size=control_samples)
         for idx in control_idx:
             # data stored as: theta_dot, theta, range values...

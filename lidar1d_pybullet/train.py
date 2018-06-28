@@ -6,9 +6,9 @@ import sys
 theta_range = np.deg2rad(120.0)
 num_rays = 100
 
-trained = True
-H = 8  # no of past observations
-F = 4  # no of future predictions
+trained = False
+H = 10  # no of past observations
+F = 1  # no of future predictions
 num_samples = 30
 training_data_fraction = 0.8
 
@@ -32,13 +32,13 @@ def prepareDataset(train_file, test_file):
                 #for k in range(num_rays):
                 #    x.append(float(parts[k + 2]))
                 x.append(parts[2:num_rays+2:1])
-                u.append(float(parts[0]))
+                u.append(float(parts[1]))
             for j in range(F):
                 parts = lines[i + j + H].split(" ")
                 #for k in range(num_rays):
                 #    y.append(float(parts[k + 2]))
                 y.append(parts[2:num_rays+2:1])
-                u.append(float(parts[0]))
+                u.append(float(parts[1]))
             
             x = np.asarray(x)
             # u = np.asarray([u])
@@ -84,13 +84,13 @@ def prepareDataset(train_file, test_file):
             #for k in range(num_rays):
             #    x.append(float(parts[k + 2]))
             x.append(parts[2:num_rays+2:1])
-            u.append(float(parts[0]))
+            u.append(float(parts[1]))
         for j in range(F):
             parts = lines[i + j + H].split(" ")
             #for k in range(num_rays):
             #    y.append(float(parts[k + 2]))
             y.append(parts[2:num_rays+2:1])
-            u.append(float(parts[0]))
+            u.append(float(parts[1]))
 
         x = np.asarray(x)
         #u = np.asarray([u])
@@ -119,7 +119,7 @@ if __name__ == '__main__':
         u_val = np.tile(u_val[...,:], (1, num_rays))
     u_test = np.tile(u_test[...,:], (1, num_rays))
     
-    vae = VAE(num_rays, H, F, num_samples)
+    vae = VAE(num_rays, H, F, num_samples, epochs=50, batch_size=500)
 
     if trained:
         # load weights into new model
