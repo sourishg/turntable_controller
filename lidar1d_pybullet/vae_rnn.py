@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Flatten, LSTM, SimpleRNN, Bidirectional
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Flatten, LSTM, SimpleRNN, Bidirectional, RepeatVector
 from keras.models import Model
 from keras.losses import mse
 from keras import backend as K
@@ -51,49 +51,52 @@ class DeepVAE:
         epsilon = K.random_normal(shape=(batch, dim))
         return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
-    def _unpack_output(self, y):
-        return np.reshape(y, (self.F, self.num_rays), order='F')
-
-    def _cum2orig(self, y):
-        y_new = []
-        for i in range(self.num_rays):
-            if i == 0:
-                y_new.append(y[i])
-            else:
-                y_new.append(y[i]-y[i-1])
-        return np.array(y_new)
+    def _get_prev_controls(self, controls):
+        prev_controls = controls[:, :self.H]
+        prev_controls = K.tile(prev_controls, [1, 4])
+        return prev_controls
 
     def _build_model(self):
+        sess = tf.Session()
+        K.set_session(sess)
+
         input_shape = (self.H, self.num_rays)
-        input_control_dim = self.F
-        output_dim = self.F * self.num_rays
-        latent_dim = 100
+        input_control_dim = self.H + self.F
+        latent_dim = 20
 
         input_rays = Input(shape=input_shape)
         input_controls = Input(shape=(input_control_dim,))
         inputs = [input_rays, input_controls]
 
-        
-        x1 = Bidirectional(SimpleRNN(self.num_rays/2, input_shape=input_shape,
-                                kernel_initializer=initializers.RandomNormal(stddev=0.001),
-                                recurrent_initializer=initializers.Identity(gain=1.0),
-                                activation='sigmoid', dropout=0.8, return_sequences=False))(input_rays)
-        #x2 = SimpleRNN(self.num_rays/2, dropout=0.8, return_sequences=False)(x1)
-        
-        #x1 = Reshape((self.H * self.num_rays,), input_shape=input_shape)(input_rays)
-        x2 = Dense(self.H * self.num_rays / 2, activation='relu')(x1)
-        #x3 = Dense(self.H * self.num_rays / 2, activation='relu')(x2)
-        self.z_mean = Dense(latent_dim, name='z_mean')(x2)
-        self.z_log_var = Dense(latent_dim, name='z_log_var')(x2)
+        x1 = LSTM(80, activation='relu', return_sequences=True, input_shape=input_shape)(input_rays)
+        x2 = LSTM(60, activation='relu', return_sequences=True)(x1)
+        x3 = LSTM(40, activation='relu', return_sequences=True)(x2)
+        x4 = LSTM(40, activation='relu', return_sequences=True)(x3)
+        x5 = LSTM(40, activation='relu', return_sequences=False)(x4)
+
+        prev_controls = Lambda(self._get_prev_controls, name='controls')(input_controls)
+
+        x6 = Dense(40)(prev_controls)
+        x7 = Multiply()([x5, x6])
+
+        self.z_mean = Dense(latent_dim, name='z_mean')(x7)
+        self.z_log_var = Dense(latent_dim, name='z_log_var')(x7)
         self.z = Lambda(self._sampling, name='z')([self.z_mean, self.z_log_var])
 
         self.encoder = Model(inputs, [self.z_mean, self.z_log_var, self.z], name='encoder')
         self.encoder.summary()
 
         latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
-        y0 = Dense(self.H * self.num_rays / 2, activation='sigmoid')(latent_inputs)
-        y1 = Dense(self.H * self.num_rays / 2, activation='relu')(y0)
-        outputs = Dense(output_dim)(y1)
+        y0 = RepeatVector(self.H)(latent_inputs)
+        y1 = LSTM(40, activation='relu', return_sequences=True, input_shape=(self.H, latent_dim))(y0)
+        y2 = LSTM(40, activation='relu', return_sequences=True)(y1)
+        y3 = LSTM(40, activation='relu', return_sequences=True)(y2)
+        y4 = LSTM(60, activation='relu', return_sequences=True)(y3)
+        y5 = LSTM(80, activation='relu', return_sequences=False)(y4)
+        y6 = Dense(self.num_rays)(y5)
+        y7 = Dense(self.num_rays)(y6)
+        y8 = Dense(self.num_rays)(y7)
+        outputs = Dense(self.num_rays, activation='relu')(y8)
 
         self.decoder = Model(latent_inputs, outputs, name='decoder')
         self.decoder.summary()
@@ -106,13 +109,13 @@ class DeepVAE:
     def load_weights(self, filename):
         self._build_model()
         self.vae.load_weights(filename)
-        self.vae.compile(optimizer='rmsprop', loss=self._vae_loss_function)
+        self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
         self.vae.summary()
         print("Loaded weights!")
 
     def fit(self, x_train, x_val, y_train, y_val, u_train, u_val):
         self._build_model()
-        self.vae.compile(optimizer='rmsprop', loss=self._vae_loss_function)
+        self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
         self.vae.summary()
         self.vae.fit([x_train, u_train],
                 y_train,
@@ -126,35 +129,23 @@ class DeepVAE:
     def plot_results(self, x_test, u_test, y_test):
         for k in range(y_test.shape[0]):
             fig = plt.figure()
-            y1 = self._unpack_output(y_test[k])
             plots = []
             for p in range(self.F):
                 ax = fig.add_subplot(2, self.F/2 + 1, p+1)
                 plots.append(ax)
+
+            y1 = y_test[k]
+            for p in range(self.F):
+                plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y1], 'r.')
             
             for i in range(self.num_samples):
                 _, _, z = self.encoder.predict([np.array([x_test[k],]),np.array([u_test[k],])], batch_size=1)
-                y_pred = self.decoder.predict(z, batch_size=1)
+                y_pred = self.decoder.predict(z, batch_size=1)[0]
                 #print(y_pred.shape)
-                y_pred = self._unpack_output(y_pred[0])
                 for p in range(self.F):
-                    y_pred_orig = self._cum2orig(y_pred[p])
-                    plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y_pred_orig], 'b.')
+                    plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y_pred], 'b.')
                 #plt.plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], y_pred[0], 'b.')
                 #print("ypred:", y_pred[0])
-            
-            for p in range(self.F):
-                y_orig = self._cum2orig(y1[p])
-                plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y_orig], 'r.')
-            #plt.ylabel("output")
-
-            '''
-            plt.figure()
-            x_plot = np.asarray(np.split(x[k][:(H*num_rays)], H))
-            for i in range(H):
-              plt.plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], x_plot[i][:num_rays], 'b.')
-            plt.ylabel("input")
-            '''
 
             plt.show()
 

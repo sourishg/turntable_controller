@@ -22,6 +22,8 @@ def get_dataset(filename):
             y1.append(parts[2:FLAGS.num_rays+2:1])
             u1.append(parts[1])
 
+        y1 = np.asarray(y1).flatten('F')
+
         x.append(x1)
         y.append(y1)
         u.append(u1)

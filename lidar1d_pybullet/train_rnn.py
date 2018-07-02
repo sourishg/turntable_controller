@@ -24,25 +24,26 @@ if __name__ == '__main__':
     train_file = sys.argv[1]
     test_file = sys.argv[2]
 
-    x, y, u = get_dataset(sys.argv[1])
-    idx = np.arange(x.shape[0])
-    np.random.shuffle(idx)
-    train_samples = int(FLAGS.train_val_split * x.shape[0])
-    train_idx = idx[:train_samples]
-    val_idx = idx[train_samples:]
+    if not TRAINED:
+        x, y, u = get_dataset(sys.argv[1])
+        idx = np.arange(x.shape[0])
+        np.random.shuffle(idx)
+        train_samples = int(FLAGS.train_val_split * x.shape[0])
+        train_idx = idx[:train_samples]
+        val_idx = idx[train_samples:]
 
-    x_train, x_val = x[train_idx, :], x[val_idx, :]
-    y_train, y_val = y[train_idx, :], y[val_idx, :]
-    u_train, u_val = u[train_idx, :], u[val_idx, :]
+        x_train, x_val = x[train_idx, :], x[val_idx, :]
+        y_train, y_val = y[train_idx, :], y[val_idx, :]
+        u_train, u_val = u[train_idx, :], u[val_idx, :]
+
+        print(x_train.shape, y_train.shape, u_train.shape)
+        print(x_val.shape, y_val.shape, u_val.shape)
 
     x_test, y_test, u_test = get_dataset(sys.argv[2])
 
-    print(x_train.shape, y_train.shape, u_train.shape)
-    print(x_val.shape, y_val.shape, u_val.shape)
-
     vae = DeepVAE(FLAGS.num_rays, FLAGS.seq_length, 
                   FLAGS.pred_length, var_samples=30,
-                  epochs=50, batch_size=500)
+                  epochs=10, batch_size=500)
 
     if TRAINED:
         # load weights into new model
