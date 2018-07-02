@@ -1,3 +1,6 @@
+*.h5
+data_training.txt
+data_testing.txt
 scribble.py
 .idea/
 # Byte-compiled / optimized / DLL files
