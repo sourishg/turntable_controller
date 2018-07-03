@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D, RepeatVector
 from keras.models import Model
 from keras.losses import mse
 from keras import backend as K
@@ -33,7 +33,7 @@ class VAE:
         kl_loss = K.sum(kl_loss, axis=-1)
         kl_loss *= -0.5
         mse_loss = mse(y_true, y_pred)
-        mse_loss *= (self.H * self.num_rays)
+        mse_loss *= (self.H)
         return K.mean(mse_loss + kl_loss)
 
     def _sampling(self, args):
@@ -51,19 +51,35 @@ class VAE:
         epsilon = K.random_normal(shape=(batch, dim))
         return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
+    def _get_prev_controls(self, controls):
+        prev_controls = K.expand_dims(controls[:, :self.H], axis=-1)
+        prev_controls = K.tile(prev_controls, [1, 1, 10])
+        return Flatten()(prev_controls)
+
     def _unpack_output(self, y):
         return np.reshape(y, (self.F, self.num_rays), order='F')
 
     def _build_model(self):
-        input_rays_dim = self.H * self.num_rays
-        input_control_dim = (self.H + self.F) * self.num_rays
-        output_dim = self.F * self.num_rays
-        latent_dim = output_dim / 10
+        input_rays_shape = (self.H, self.num_rays)
+        input_control_dim = self.H + self.F
+        latent_dim = 20
 
-        input_rays = Input(shape=(input_rays_dim,))
+        input_rays = Input(shape=input_rays_shape)
         input_controls = Input(shape=(input_control_dim,))
         inputs = [input_rays, input_controls]
 
+        prev_controls = Lambda(self._get_prev_controls, name='controls')(input_controls)
+
+        x1 = Conv1D(80, 3, activation='relu', padding='same', input_shape=input_rays_shape)(input_rays)
+        x2 = Conv1D(40, 3, activation='relu', padding='same')(x1)
+        x3 = Conv1D(20, 3, activation='relu', padding='same')(x2)
+        x4 = Conv1D(10, 3, activation='relu', padding='same')(x3)
+        x5 = Flatten()(x4)
+
+        x6 = Multiply()([x5, prev_controls])
+        x7 = Dense(50)(x6)
+
+        '''
         x1 = Dense(input_control_dim, activation='softplus')(input_rays)
         x2 = Multiply()([x1, input_controls])
         x3 = Reshape((input_control_dim, 1), input_shape=(input_control_dim,))(x2)
@@ -75,15 +91,21 @@ class VAE:
         x9 = MaxPooling1D(2, padding='same')(x8)
         x10 = Flatten()(x9)
         x11 = Dense(latent_dim, activation='softplus')(x10)
-        
-        self.z_mean = Dense(latent_dim, name='z_mean')(x11)
-        self.z_log_var = Dense(latent_dim, name='z_log_var')(x11)
+        '''
+
+        self.z_mean = Dense(latent_dim, name='z_mean')(x7)
+        self.z_log_var = Dense(latent_dim, name='z_log_var')(x7)
         self.z = Lambda(self._sampling, name='z')([self.z_mean, self.z_log_var])
 
         self.encoder = Model(inputs, [self.z_mean, self.z_log_var, self.z], name='encoder')
         self.encoder.summary()
 
         latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
+        y0 = Dense(40, activation='relu')(latent_inputs)
+        y1 = Dense(80, activation='relu')(y0)
+        outputs = Dense(self.num_rays, activation='relu')(y1)
+
+        '''
         y0 = Dense(latent_dim, activation='softplus')(latent_inputs)
         y1 = Reshape((latent_dim, 1), input_shape=(latent_dim,))(y0)
         y2 = Conv1D(4, 3, activation='relu', padding='same')(y1)
@@ -93,6 +115,7 @@ class VAE:
         y6 = Conv1D(16, 3, activation='relu', padding='same')(y5)
         y7 = Flatten()(y6)
         outputs = Dense(output_dim, activation='relu')(y7)
+        '''
 
         self.decoder = Model(latent_inputs, outputs, name='decoder')
         self.decoder.summary()

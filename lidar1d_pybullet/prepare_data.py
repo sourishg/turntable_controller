@@ -28,8 +28,8 @@ def get_dataset(filename):
         y.append(y1)
         u.append(u1)
 
-    x = np.array(x).astype('float32')
-    y = np.array(y).astype('float32')
+    x = np.array(x).astype('float32') / 5.0
+    y = np.array(y).astype('float32') / 5.0
     u = np.array(u).astype('float32')
 
     return x, y, u

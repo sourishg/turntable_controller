@@ -43,7 +43,7 @@ if __name__ == '__main__':
 
     vae = DeepVAE(FLAGS.num_rays, FLAGS.seq_length, 
                   FLAGS.pred_length, var_samples=30,
-                  epochs=10, batch_size=500)
+                  epochs=50, batch_size=500)
 
     if TRAINED:
         # load weights into new model
