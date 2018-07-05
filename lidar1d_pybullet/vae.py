@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D, RepeatVector
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D, RepeatVector, LSTM
 from keras.models import Model
 from keras.losses import mse
 from keras import backend as K
@@ -29,12 +29,13 @@ class VAE:
         self.batch_size = batch_size
 
     def _vae_loss_function(self, y_true, y_pred):
-        kl_loss = 1 + self.z_log_var - K.square(self.z_mean) - K.exp(self.z_log_var)
-        kl_loss = K.sum(kl_loss, axis=-1)
-        kl_loss *= -0.5
+        # kl_loss = 1 + self.z_log_var - K.square(self.z_mean) - K.exp(self.z_log_var)
+        # kl_loss = K.sum(kl_loss, axis=-1)
+        # kl_loss *= -0.5
         mse_loss = mse(y_true, y_pred)
         mse_loss *= (self.H)
-        return K.mean(mse_loss + kl_loss)
+        # return K.mean(mse_loss + kl_loss)
+        return mse_loss
 
     def _sampling(self, args):
         """Reparameterization trick by sampling fr an isotropic unit Gaussian.
@@ -53,7 +54,7 @@ class VAE:
 
     def _get_prev_controls(self, controls):
         prev_controls = K.expand_dims(controls[:, :self.H], axis=-1)
-        prev_controls = K.tile(prev_controls, [1, 1, 10])
+        prev_controls = K.tile(prev_controls, [1, 1, 4])
         return Flatten()(prev_controls)
 
     def _unpack_output(self, y):
@@ -62,7 +63,7 @@ class VAE:
     def _build_model(self):
         input_rays_shape = (self.H, self.num_rays)
         input_control_dim = self.H + self.F
-        latent_dim = 20
+        latent_dim = 10
 
         input_rays = Input(shape=input_rays_shape)
         input_controls = Input(shape=(input_control_dim,))
@@ -70,14 +71,9 @@ class VAE:
 
         prev_controls = Lambda(self._get_prev_controls, name='controls')(input_controls)
 
-        x1 = Conv1D(80, 3, activation='relu', padding='same', input_shape=input_rays_shape)(input_rays)
-        x2 = Conv1D(40, 3, activation='relu', padding='same')(x1)
-        x3 = Conv1D(20, 3, activation='relu', padding='same')(x2)
-        x4 = Conv1D(10, 3, activation='relu', padding='same')(x3)
-        x5 = Flatten()(x4)
-
-        x6 = Multiply()([x5, prev_controls])
-        x7 = Dense(50)(x6)
+        x1 = LSTM(100, return_sequences=True, input_shape=input_rays_shape)(input_rays)
+        x2 = LSTM(100, return_sequences=True)(x1)
+        x3 = LSTM(100, return_sequences=False)(x2)
 
         '''
         x1 = Dense(input_control_dim, activation='softplus')(input_rays)
@@ -93,17 +89,22 @@ class VAE:
         x11 = Dense(latent_dim, activation='softplus')(x10)
         '''
 
-        self.z_mean = Dense(latent_dim, name='z_mean')(x7)
-        self.z_log_var = Dense(latent_dim, name='z_log_var')(x7)
+        '''
+        self.z_mean = Dense(latent_dim, name='z_mean')(x3)
+        self.z_log_var = Dense(latent_dim, name='z_log_var')(x3)
         self.z = Lambda(self._sampling, name='z')([self.z_mean, self.z_log_var])
 
         self.encoder = Model(inputs, [self.z_mean, self.z_log_var, self.z], name='encoder')
         self.encoder.summary()
 
         latent_inputs = Input(shape=(latent_dim,), name='z_sampling')
-        y0 = Dense(40, activation='relu')(latent_inputs)
-        y1 = Dense(80, activation='relu')(y0)
-        outputs = Dense(self.num_rays, activation='relu')(y1)
+        y1 = Reshape((latent_dim, 1), input_shape=(latent_dim,))(latent_inputs)
+        y2 = Conv1D(400, 5, activation='sigmoid', padding='same')(y1)
+        y3 = Conv1D(200, 5, activation='sigmoid', padding='same')(y2)
+        y4 = Conv1D(100, 5, activation='sigmoid', padding='same')(y3)
+        y5 = Flatten()(y4)
+        outputs = Dense(self.num_rays, activation='sigmoid')(y5)
+        '''
 
         '''
         y0 = Dense(latent_dim, activation='softplus')(latent_inputs)
@@ -117,11 +118,11 @@ class VAE:
         outputs = Dense(output_dim, activation='relu')(y7)
         '''
 
-        self.decoder = Model(latent_inputs, outputs, name='decoder')
-        self.decoder.summary()
+        # self.decoder = Model(latent_inputs, outputs, name='decoder')
+        # self.decoder.summary()
 
-        outputs = self.decoder(self.encoder(inputs)[2])
-        self.vae = Model(inputs, outputs, name='vae')
+        # outputs = self.decoder(self.encoder(inputs)[2])
+        self.vae = Model(inputs, x3, name='vae')
 
         print("Built VAE architecture!")
 

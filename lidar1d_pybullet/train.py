@@ -5,7 +5,7 @@ import tensorflow as tf
 
 from tensorflow.python.platform import flags
 from prepare_data import get_dataset
-from vae import VAE
+from model import TRFModel
 
 TRAINED = False
 
@@ -41,9 +41,9 @@ if __name__ == '__main__':
 
     x_test, y_test, u_test = get_dataset(sys.argv[2])
 
-    vae = VAE(FLAGS.num_rays, FLAGS.seq_length, 
-              FLAGS.pred_length, var_samples=30,
-              epochs=20, batch_size=500)
+    vae = TRFModel(FLAGS.num_rays, FLAGS.seq_length, 
+                   FLAGS.pred_length, var_samples=30,
+                   epochs=20, batch_size=500)
 
     if TRAINED:
         # load weights into new model
