@@ -82,14 +82,17 @@ class TRFModel:
         self.z_log_var = TimeDistributed(Dense(self.latent_dim, name='z_log_var', input_shape=(self.H, 20)))(enc4)
         self.z_enc = Lambda(self._sampling, name='z')([self.z_mean, self.z_log_var])
 
-        # prev_controls = Lambda(self._get_prev_controls)(input_controls)
+        prev_controls = Lambda(self._get_prev_controls)(input_controls)
+        d1 = Flatten()(self.z_enc)
+        d2 = Lambda(lambda x : K.expand_dims(x, axis=-1))(d1)
+        self.zc_enc = Flatten()(Multiply()([d2, prev_controls]))
         # self.zc_enc = Multiply()([self.z_enc, prev_controls])
 
-        self.encoder = Model([input_rays, input_controls], [self.z_mean, self.z_log_var, self.z_enc], name='latent_model')
+        self.encoder = Model([input_rays, input_controls], [self.z_mean, self.z_log_var, self.z_enc, self.zc_enc], name='latent_model')
         self.encoder.summary()
 
     def _build_initial_forward_model(self, input_rays, input_controls):
-        latent_inputs = Input(shape=(self.H, self.latent_dim,), name='z_sampling')
+        latent_inputs = Input(shape=(self.H * self.latent_dim), name='z_sampling')
         '''
         prev_ray = Lambda(lambda x : K.expand_dims(x[:, -1, :], axis=-1))(input_rays)
         next_control = Lambda(lambda x : K.tile(x[:, self.H:], [1, self.num_rays]))(input_controls)
@@ -101,14 +104,16 @@ class TRFModel:
         d5 = Multiply()([next_control, d4])
         nc = Reshape((self.num_rays, 1), input_shape=(self.num_rays,))(d5)
         '''
-        dec1 = Flatten()(latent_inputs)
-        dec2 = Lambda(lambda x : K.expand_dims(x, axis=-1))(dec1)
+        next_control = Lambda(lambda x : K.tile(x[:, self.H:], [1, 1]))(input_controls)
+        # dec1 = Flatten()(latent_inputs)
+        # dec2 = Lambda(lambda x : K.expand_dims(x, axis=-1))(dec1)
         prev_ray = Lambda(lambda x : K.expand_dims(x[:, -1, :], axis=-1))(input_rays)
-        prev_controls = Lambda(self._get_prev_controls)(input_controls)
-        zc = Flatten()(Multiply()([dec2, prev_controls]))
-        zc2 = Dense(self.num_rays, activation='tanh')(zc)
-        zc3 = Reshape((self.num_rays, 1), input_shape=(self.num_rays,))(zc2)
-        dec3 = Add()([zc3, prev_ray])
+        # prev_controls = Lambda(self._get_prev_controls)(input_controls)
+        # zc = Flatten()(Multiply()([dec2, prev_controls]))
+        zc1 = Concatenate()([latent_inputs, next_control])
+        zc2 = Dense(self.num_rays, activation='tanh')(zc1)
+        nc = Reshape((self.num_rays, 1), input_shape=(self.num_rays,))(zc2)
+        dec3 = Add()([nc, prev_ray])
         dec4 = CuDNNLSTM(1, return_sequences=True, input_shape=(self.num_rays, 1))(dec3)
         dec5 = CuDNNLSTM(1, return_sequences=True)(dec4)
         dec6 = CuDNNLSTM(1, return_sequences=True)(dec5)
@@ -130,7 +135,7 @@ class TRFModel:
         self._build_latent_model(input_rays, input_controls)
         self.decoder = self._build_initial_forward_model(input_rays, input_controls)
 
-        outputs = self.decoder([input_rays, input_controls, self.encoder([input_rays, input_controls])[2]])
+        outputs = self.decoder([input_rays, input_controls, self.encoder([input_rays, input_controls])[3]])
         
         self.vae = Model([input_rays, input_controls], outputs, name='vae')
         self.vae.summary()
