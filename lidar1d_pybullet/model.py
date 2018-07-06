@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D, RepeatVector, LSTM, Add, TimeDistributed
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D, RepeatVector, LSTM, Add, TimeDistributed, Concatenate
 from keras.models import Model
 from keras.losses import mse
 from keras import backend as K
@@ -33,13 +33,13 @@ class TRFModel:
         self.latent_dim = 10
 
     def _vae_loss_function(self, y_true, y_pred):
-        # kl_loss = 1 + self.z_log_var - K.square(self.z_mean) - K.exp(self.z_log_var)
-        # kl_loss = K.sum(K.sum(kl_loss, axis=-1), axis=-1)
-        # kl_loss *= -0.5
+        kl_loss = -0.5 * (1 + self.z_log_var - K.square(self.z_mean) - K.exp(self.z_log_var))
+        kl_loss = K.sum(kl_loss, axis=-1)
+        kl_loss = K.mean(kl_loss, axis=-1)
         mse_loss = mse(y_true, y_pred)
         mse_loss *= (self.H)
-        # return K.mean(mse_loss + kl_loss)
-        return mse_loss
+        return mse_loss + kl_loss
+        # return mse_loss
 
     def _sampling(self, args):
         """Reparameterization trick by sampling fr an isotropic unit Gaussian.
@@ -59,7 +59,7 @@ class TRFModel:
 
     def _get_prev_controls(self, controls):
         prev_controls = K.expand_dims(controls[:, :self.H], axis=-1)
-        return prev_controls
+        return K.tile(prev_controls, [1, 1, 10])
 
     def _unpack_output(self, y):
         return np.reshape(y, (self.F, self.num_rays), order='F')
@@ -78,17 +78,14 @@ class TRFModel:
 
     def _build_initial_model(self, input_rays, input_controls):
         z = self.encoder(input_rays)[2]
-        z1 = TimeDistributed(Dense(100, input_shape=(self.H, 1)))(z)
         prev_controls = Lambda(self._get_prev_controls, name='controls')(input_controls)
-        c1 = TimeDistributed(Dense(100, input_shape=(self.H, 1)))(prev_controls)
-
-        zc = Multiply()([z1, c1])
+        zc = Concatenate()([z, prev_controls])
 
         x1 = LSTM(100, return_sequences=True, input_shape=self.input_rays_shape)(input_rays)
         x2 = LSTM(100, return_sequences=True)(x1)
-        x3 = LSTM(100, return_sequences=True)(x2)
-        x4 = Add()([x3, zc])
-        x5 = LSTM(100, return_sequences=False)(x3)
+        x3 = LSTM(80, return_sequences=True)(x2)
+        x4 = Concatenate()([x3, zc])
+        x5 = LSTM(100, return_sequences=False)(x4)
         # x6 = Dense(100, activation='sigmoid')(x5)
         
         self.vae = Model([input_rays, input_controls], x5, name='vae')
@@ -124,7 +121,7 @@ class TRFModel:
         print("Saved weights!")
 
     def plot_results(self, x_test, u_test, y_test):
-        for k in range(y_test.shape[0]):
+        for k in range(500, y_test.shape[0], 1):
             fig = plt.figure()
             y1 = self._unpack_output(y_test[k])
             plots = []

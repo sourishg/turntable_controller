@@ -7,7 +7,7 @@ from tensorflow.python.platform import flags
 from prepare_data import get_dataset
 from model import TRFModel
 
-TRAINED = False
+TRAINED = True
 
 FLAGS = flags.FLAGS
 
@@ -43,7 +43,7 @@ if __name__ == '__main__':
 
     vae = TRFModel(FLAGS.num_rays, FLAGS.seq_length, 
                    FLAGS.pred_length, var_samples=30,
-                   epochs=20, batch_size=500)
+                   epochs=20, batch_size=128)
 
     if TRAINED:
         # load weights into new model
