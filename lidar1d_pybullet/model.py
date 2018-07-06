@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D, RepeatVector, LSTM, Add, TimeDistributed, Concatenate
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D, RepeatVector, LSTM, Add, TimeDistributed, Concatenate, CuDNNLSTM
 from keras.models import Model
 from keras.losses import mse
 from keras import backend as K
@@ -58,45 +58,55 @@ class TRFModel:
         return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
     def _get_prev_controls(self, controls):
-        prev_controls = K.expand_dims(controls[:, :self.H], axis=-1)
-        return K.tile(prev_controls, [1, 1, 10])
+        prev_controls = K.tile(controls[:, :self.H], [1, 10])
+        prev_controls = K.expand_dims(prev_controls, axis=-1)
+        return prev_controls
 
     def _unpack_output(self, y):
         return np.reshape(y, (self.F, self.num_rays), order='F')
 
     def _build_latent_model(self, input_rays):
-        x1 = LSTM(80, return_sequences=True, input_shape=self.input_rays_shape)(input_rays)
-        x2 = LSTM(40, return_sequences=True)(x1)
-        x3 = LSTM(20, return_sequences=True)(x2)
-
-        self.z_mean = TimeDistributed(Dense(self.latent_dim, name='z_mean', input_shape=(self.H, 20)))(x3)
-        self.z_log_var = TimeDistributed(Dense(self.latent_dim, name='z_log_var', input_shape=(self.H, 20)))(x3)
-        self.z = Lambda(self._sampling, name='z')([self.z_mean, self.z_log_var])
-
-        self.encoder = Model(input_rays, [self.z_mean, self.z_log_var, self.z], name='latent_model')
-        self.encoder.summary()
+        pass
 
     def _build_initial_model(self, input_rays, input_controls):
-        z = self.encoder(input_rays)[2]
-        prev_controls = Lambda(self._get_prev_controls, name='controls')(input_controls)
-        zc = Concatenate()([z, prev_controls])
-
-        x1 = LSTM(100, return_sequences=True, input_shape=self.input_rays_shape)(input_rays)
-        x2 = LSTM(100, return_sequences=True)(x1)
-        x3 = LSTM(80, return_sequences=True)(x2)
-        x4 = Concatenate()([x3, zc])
-        x5 = LSTM(100, return_sequences=False)(x4)
-        # x6 = Dense(100, activation='sigmoid')(x5)
-        
-        self.vae = Model([input_rays, input_controls], x5, name='vae')
-        self.vae.summary()
+        pass
 
     def _build_model(self):
         input_rays = Input(shape=self.input_rays_shape)
         input_controls = Input(shape=self.input_control_shape)
 
-        self._build_latent_model(input_rays)
-        self._build_initial_model(input_rays, input_controls)
+        enc1 = CuDNNLSTM(100, return_sequences=True, input_shape=self.input_rays_shape)(input_rays)
+        enc2 = CuDNNLSTM(80, return_sequences=True)(enc1)
+        enc3 = CuDNNLSTM(40, return_sequences=True)(enc2)
+        enc4 = CuDNNLSTM(20, return_sequences=True)(enc3)
+
+        self.z_mean = TimeDistributed(Dense(self.latent_dim, name='z_mean', input_shape=(self.H, 20)))(enc4)
+        self.z_log_var = TimeDistributed(Dense(self.latent_dim, name='z_log_var', input_shape=(self.H, 20)))(enc4)
+        self.z = Lambda(self._sampling, name='z')([self.z_mean, self.z_log_var])
+
+        self.encoder = Model(input_rays, [self.z_mean, self.z_log_var, self.z], name='latent_model')
+        self.encoder.summary()
+
+        latent_inputs = Input(shape=(self.H, self.latent_dim), name='z_sampling')
+        dec1 = Flatten()(self.z)
+        dec2 = Lambda(lambda x : K.expand_dims(x, axis=-1))(dec1)
+        prev_ray = Lambda(lambda x : K.expand_dims(x[:, -1, :], axis=-1))(input_rays)
+        prev_controls = Lambda(self._get_prev_controls)(input_controls)
+        zc = Multiply()([dec2, prev_controls])
+        dec3 = Add()([zc, prev_ray])
+        dec4 = CuDNNLSTM(1, return_sequences=True, input_shape=(self.num_rays, 1))(dec3)
+        #dec5 = Multiply()([dec4, prev_controls])
+        dec6 = CuDNNLSTM(1, return_sequences=True)(dec4)
+        dec7 = CuDNNLSTM(1, return_sequences=True)(dec6)
+        outputs = Reshape((self.num_rays,), input_shape=(self.num_rays, 1))(dec7)
+
+        self.decoder = Model([input_rays, input_controls, latent_inputs], outputs, name='decoder')
+        self.decoder.summary()
+
+        outputs = self.decoder([input_rays, input_controls, self.encoder(input_rays)[2]])
+        
+        self.vae = Model([input_rays, input_controls], outputs, name='vae')
+        self.vae.summary()
 
         print("Built VAE architecture!")
 
@@ -130,8 +140,8 @@ class TRFModel:
                 plots.append(ax)
             
             for i in range(self.num_samples):
-                #_, _, z = self.encoder.predict([np.array([x_test[k],]),np.array([u_test[k],])], batch_size=1)
-                #y_pred = self.decoder.predict(z, batch_size=1)
+                #_, _, z = self.encoder.predict(np.array([x_test[k]]), batch_size=1)
+                #y_pred = self.decoder.predict([np.array([x_test[k]]),np.array([u_test[k]]),z], batch_size=1)
                 #print(y_pred.shape)
                 y_pred = self.vae.predict([np.array([x_test[k],]),np.array([u_test[k],])], batch_size=1)
                 y_pred = self._unpack_output(y_pred[0])
