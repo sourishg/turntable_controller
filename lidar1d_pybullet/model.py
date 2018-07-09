@@ -30,7 +30,8 @@ class TRFModel:
 
         self.input_rays_shape = (self.H, self.num_rays)
         self.input_control_shape = (self.H + self.F, )
-        self.latent_dim = self.H + self.F
+        self.latent_dim = 1
+        self.output_dim = self.num_rays
 
     def _vae_loss_function(self, y_true, y_pred):
         kl_loss = -0.5 * (1 + self.z_log_var - K.square(self.z_mean) - K.exp(self.z_log_var))
@@ -58,19 +59,12 @@ class TRFModel:
         return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
     def _get_prev_controls(self, controls):
-        # prev_controls = K.expand_dims(controls, axis=-1)
-        # prev_controls = K.tile(prev_controls[:, :self.H, :], [1, 1, self.latent_dim])
         prev_controls = K.tile(controls[:, :self.H], [1, self.latent_dim])
         prev_controls = K.expand_dims(prev_controls, axis=-1)
         return prev_controls
 
-    def _get_next_controls(self, controls):
-        next_controls = K.tile(controls[:, self.H:], [1, 10])
-        next_controls = K.expand_dims(next_controls, axis=-1)
-        return next_controls
-
     def _unpack_output(self, y):
-        return np.reshape(y, (self.F, self.num_rays), order='F')
+        return np.reshape(y, (self.F, self.output_dim))
 
     def _build_latent_model(self, input_rays, input_controls):
         enc1 = CuDNNLSTM(self.num_rays, return_sequences=True, input_shape=self.input_rays_shape)(input_rays)
@@ -86,54 +80,56 @@ class TRFModel:
         d1 = Flatten()(self.z_enc)
         d2 = Lambda(lambda x : K.expand_dims(x, axis=-1))(d1)
         self.zc_enc = Flatten()(Multiply()([d2, prev_controls]))
-        # self.zc_enc = Multiply()([self.z_enc, prev_controls])
 
         self.encoder = Model([input_rays, input_controls], [self.z_mean, self.z_log_var, self.z_enc, self.zc_enc], name='latent_model')
         self.encoder.summary()
 
-    def _build_initial_forward_model(self, input_rays, input_controls):
-        latent_inputs = Input(shape=(self.H * self.latent_dim), name='z_sampling')
-        '''
-        prev_ray = Lambda(lambda x : K.expand_dims(x[:, -1, :], axis=-1))(input_rays)
-        next_control = Lambda(lambda x : K.tile(x[:, self.H:], [1, self.num_rays]))(input_controls)
-        # nc_enc = Concatenate()([latent_inputs, next_control])
-        d1 = CuDNNLSTM(40, return_sequences=True, input_shape=(self.H, self.latent_dim))(latent_inputs)
-        #d2 = CuDNNLSTM(40, return_sequences=True)(d1)
-        #d3 = CuDNNLSTM(80, return_sequences=True)(d2)
-        d4 = CuDNNLSTM(self.num_rays)(d1)
-        d5 = Multiply()([next_control, d4])
-        nc = Reshape((self.num_rays, 1), input_shape=(self.num_rays,))(d5)
-        '''
-        next_control = Lambda(lambda x : K.tile(x[:, self.H:], [1, 1]))(input_controls)
-        # dec1 = Flatten()(latent_inputs)
-        # dec2 = Lambda(lambda x : K.expand_dims(x, axis=-1))(dec1)
-        prev_ray = Lambda(lambda x : K.expand_dims(x[:, -1, :], axis=-1))(input_rays)
-        # prev_controls = Lambda(self._get_prev_controls)(input_controls)
-        # zc = Flatten()(Multiply()([dec2, prev_controls]))
-        zc1 = Concatenate()([latent_inputs, next_control])
-        zc2 = Dense(self.num_rays, activation='tanh')(zc1)
-        nc = Reshape((self.num_rays, 1), input_shape=(self.num_rays,))(zc2)
-        dec3 = Add()([nc, prev_ray])
-        dec4 = CuDNNLSTM(1, return_sequences=True, input_shape=(self.num_rays, 1))(dec3)
+    def _state_transition(self, y, z, u):
+        yz = Concatenate()([y, z])
+        z1 = Dense(self.H * self.latent_dim)(yz)
+        z2 = Dense(self.H * self.latent_dim, activation='tanh')(z1)
+        return z2
+
+    def _forward_model(self, prev_y, z, u):
+        y = Lambda(lambda x : K.expand_dims(x, axis=-1))(prev_y)
+        u = Lambda(lambda x : K.tile(x, [1, self.H * self.latent_dim]))(u)
+        zu = Multiply()([z, u])
+        dec1 = Dense(self.output_dim, activation='tanh')(zu)
+        dec2 = Reshape((self.output_dim, 1), input_shape=(self.output_dim,))(dec1)
+        dec3 = Add()([dec2, y])
+        dec4 = CuDNNLSTM(1, return_sequences=True, input_shape=(self.output_dim, 1))(dec3)
         dec5 = CuDNNLSTM(1, return_sequences=True)(dec4)
         dec6 = CuDNNLSTM(1, return_sequences=True)(dec5)
-        # dec7 = CuDNNLSTM(1, return_sequences=True)(dec6)
-        outputs = Reshape((self.num_rays,), input_shape=(self.num_rays, 1))(dec6)
+        outputs = Reshape((self.output_dim,), input_shape=(self.output_dim, 1))(dec6)
+        return outputs
 
-        self.decoder = Model([input_rays, input_controls, latent_inputs], outputs, name='decoder')
+    def _build_transition_model(self, input_rays, input_controls):
+        latent_inputs = Input(shape=(self.H * self.latent_dim, ), name='z_sampling')
+        z = latent_inputs
+        prev_y = Lambda(lambda x : x[:, -1, :])(input_rays)
+        outputs = []
+
+        for i in range(self.F):
+            u = Lambda(lambda x : K.expand_dims(x[:, self.H + i], axis=-1))(input_controls)
+            y_pred = self._forward_model(prev_y, z, u)
+            outputs.append(y_pred)
+            if i != self.F - 1:
+                z = self._state_transition(y_pred, z, u)
+                prev_y = y_pred
+
+        outputs_flat = outputs[0]
+        for i in range(1, self.F, 1):
+            outputs_flat = Concatenate()([outputs_flat, outputs[i]])
+
+        self.decoder = Model([input_rays, input_controls, latent_inputs], outputs_flat, name='decoder')
         self.decoder.summary()
-
-        return self.decoder
-
-    def _state_transition(self, z):
-        pass
 
     def _build_model(self):
         input_rays = Input(shape=self.input_rays_shape)
         input_controls = Input(shape=self.input_control_shape)
 
         self._build_latent_model(input_rays, input_controls)
-        self.decoder = self._build_initial_forward_model(input_rays, input_controls)
+        self._build_transition_model(input_rays, input_controls)
 
         outputs = self.decoder([input_rays, input_controls, self.encoder([input_rays, input_controls])[3]])
         

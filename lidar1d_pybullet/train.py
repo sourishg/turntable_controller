@@ -13,7 +13,7 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_integer('seq_length', 10,
                      'Length of input sequence')
-flags.DEFINE_integer('pred_length', 1,
+flags.DEFINE_integer('pred_length', 5,
                      'Length of prediction')
 flags.DEFINE_integer('num_rays', 100,
                      'Length of prediction')
@@ -43,7 +43,7 @@ if __name__ == '__main__':
 
     vae = TRFModel(FLAGS.num_rays, FLAGS.seq_length, 
                    FLAGS.pred_length, var_samples=30,
-                   epochs=40, batch_size=256)
+                   epochs=20, batch_size=256)
 
     if TRAINED:
         # load weights into new model
