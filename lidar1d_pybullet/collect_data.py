@@ -8,7 +8,7 @@ import sys
 # Constants
 PI = 3.14159
 num_obstacles = 10
-world_samples = 5  # no of random worlds
+world_samples = 1  # no of random worlds
 control_samples = 100  # no of observations in each world
 
 # Control params

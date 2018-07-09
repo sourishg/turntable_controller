@@ -13,12 +13,14 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_integer('seq_length', 10,
                      'Length of input sequence')
-flags.DEFINE_integer('pred_length', 5,
+flags.DEFINE_integer('pred_length', 10,
                      'Length of prediction')
 flags.DEFINE_integer('num_rays', 100,
                      'Length of prediction')
 flags.DEFINE_float('train_val_split', 0.8,
                    'Training/validation split ratio')
+flags.DEFINE_bool('task_relevant', True,
+                  'Whether or not to predict task relevant features')
 
 if __name__ == '__main__':
     train_file = sys.argv[1]
@@ -43,14 +45,20 @@ if __name__ == '__main__':
 
     vae = TRFModel(FLAGS.num_rays, FLAGS.seq_length, 
                    FLAGS.pred_length, var_samples=30,
-                   epochs=20, batch_size=256)
+                   epochs=50, batch_size=256)
 
     if TRAINED:
         # load weights into new model
-        vae.load_weights("vae_weights.h5")
+        if FLAGS.task_relevant:
+            vae.load_weights("vae_weights_tr.h5")
+        else:
+            vae.load_weights("vae_weights.h5")
     else:
         vae.fit(x_train, x_val,
                 y_train, y_val,
                 u_train, u_val)
 
-    vae.plot_results(x_test, u_test, y_test)
+    if FLAGS.task_relevant:
+        vae.plot_tr_results(x_test, u_test, y_test)
+    else:
+        vae.plot_results(x_test, u_test, y_test)

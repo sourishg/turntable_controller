@@ -9,11 +9,14 @@ from keras.callbacks import LambdaCallback
 from keras import activations
 
 import tensorflow as tf
+from tensorflow.python.platform import flags
 
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 import sys
+
+FLAGS = flags.FLAGS
 
 class TRFModel:
     def __init__(self,
@@ -30,8 +33,12 @@ class TRFModel:
 
         self.input_rays_shape = (self.H, self.num_rays)
         self.input_control_shape = (self.H + self.F, )
-        self.latent_dim = 1
-        self.output_dim = self.num_rays
+        if FLAGS.task_relevant:
+            self.output_dim = 1
+            self.latent_dim = 1
+        else:
+            self.output_dim = self.num_rays
+            self.latent_dim = 3
 
     def _vae_loss_function(self, y_true, y_pred):
         kl_loss = -0.5 * (1 + self.z_log_var - K.square(self.z_mean) - K.exp(self.z_log_var))
@@ -39,8 +46,9 @@ class TRFModel:
         kl_loss = K.mean(kl_loss, axis=-1)
         mse_loss = mse(y_true, y_pred)
         mse_loss *= (self.H)
-        return mse_loss + kl_loss
+        return K.mean(mse_loss + kl_loss)
         # return mse_loss
+        # return kl_loss
 
     def _sampling(self, args):
         """Reparameterization trick by sampling fr an isotropic unit Gaussian.
@@ -91,16 +99,25 @@ class TRFModel:
         return z2
 
     def _forward_model(self, prev_y, z, u):
-        y = Lambda(lambda x : K.expand_dims(x, axis=-1))(prev_y)
-        u = Lambda(lambda x : K.tile(x, [1, self.H * self.latent_dim]))(u)
-        zu = Multiply()([z, u])
-        dec1 = Dense(self.output_dim, activation='tanh')(zu)
-        dec2 = Reshape((self.output_dim, 1), input_shape=(self.output_dim,))(dec1)
-        dec3 = Add()([dec2, y])
-        dec4 = CuDNNLSTM(1, return_sequences=True, input_shape=(self.output_dim, 1))(dec3)
-        dec5 = CuDNNLSTM(1, return_sequences=True)(dec4)
-        dec6 = CuDNNLSTM(1, return_sequences=True)(dec5)
-        outputs = Reshape((self.output_dim,), input_shape=(self.output_dim, 1))(dec6)
+        outputs = None
+        if FLAGS.task_relevant:
+            zu = Concatenate()([z, u, prev_y])
+            dec1 = Dense(20, activation='tanh')(zu)
+            dec2 = Dense(40, activation='tanh')(dec1)
+            dec3 = Dense(80, activation='tanh')(dec2)
+            dec4 = Dense(self.num_rays, activation='tanh')(dec3)
+            outputs = Dense(self.output_dim, activation='relu')(dec4)
+        else:
+            zu = Concatenate()([z, u])
+            dec1 = Dense(self.output_dim, activation='tanh')(zu)
+            y1 = Lambda(lambda x : K.expand_dims(x, axis=-1))(prev_y)
+            dec2 = Reshape((self.output_dim, 1), input_shape=(self.output_dim,))(dec1)
+            # u = Lambda(lambda x : K.tile(x, [1, self.H * self.latent_dim]))(u)
+            dec3 = Add()([dec2, y1])
+            dec4 = CuDNNLSTM(1, return_sequences=True, input_shape=(self.output_dim, 1))(dec3)
+            dec5 = CuDNNLSTM(1, return_sequences=True)(dec4)
+            dec6 = CuDNNLSTM(1, return_sequences=True)(dec5)
+            outputs = Reshape((self.output_dim,), input_shape=(self.output_dim, 1))(dec6)
         return outputs
 
     def _build_transition_model(self, input_rays, input_controls):
@@ -108,6 +125,9 @@ class TRFModel:
         z = latent_inputs
         prev_y = Lambda(lambda x : x[:, -1, :])(input_rays)
         outputs = []
+
+        if FLAGS.task_relevant:
+            prev_y = Dense(self.output_dim, activation='relu')(prev_y)
 
         for i in range(self.F):
             u = Lambda(lambda x : K.expand_dims(x[:, self.H + i], axis=-1))(input_controls)
@@ -155,12 +175,34 @@ class TRFModel:
                 batch_size=self.batch_size,
                 validation_data=([x_val, u_val], y_val))
         # serialize weights to HDF5
-        self.vae.save_weights("vae_weights.h5")
+        if FLAGS.task_relevant:
+            self.vae.save_weights("vae_weights_tr.h5")
+        else:
+            self.vae.save_weights("vae_weights.h5")
         print("Saved weights!")
 
-    def plot_results(self, x_test, u_test, y_test):
-        for k in range(500, y_test.shape[0], 1):
+    def plot_tr_results(self, x_test, u_test, y_test):
+        for k in range(0, y_test.shape[0], 1):
             fig = plt.figure()
+            plt.ylim((0.0, 1.0))
+            y_true = y_test[k]
+            for i in range(self.num_samples):
+                #_, _, z = self.encoder.predict(np.array([x_test[k]]), batch_size=1)
+                #y_pred = self.decoder.predict([np.array([x_test[k]]),np.array([u_test[k]]),z], batch_size=1)
+                #print(y_pred.shape)
+                y_pred = self.vae.predict([np.array([x_test[k],]),np.array([u_test[k],])], batch_size=1)[0]
+                plt.plot([j for j in range(self.F)], [float(u) for u in y_pred], 'b.')
+                #plt.plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], y_pred[0], 'b.')
+                #print("ypred:", y_pred[0])
+            
+            plt.plot([j for j in range(self.F)], [float(u) for u in y_true], 'r.')
+
+            plt.show()
+
+    def plot_results(self, x_test, u_test, y_test):
+        for k in range(0, y_test.shape[0], 1):
+            fig = plt.figure()
+            plt.ylim((0.0, 1.0))
             y1 = self._unpack_output(y_test[k])
             plots = []
             for p in range(self.F):
