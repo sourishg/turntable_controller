@@ -13,13 +13,13 @@ FLAGS = flags.FLAGS
 
 flags.DEFINE_integer('seq_length', 10,
                      'Length of input sequence')
-flags.DEFINE_integer('pred_length', 10,
+flags.DEFINE_integer('pred_length', 5,
                      'Length of prediction')
 flags.DEFINE_integer('num_rays', 100,
                      'Length of prediction')
 flags.DEFINE_float('train_val_split', 0.8,
                    'Training/validation split ratio')
-flags.DEFINE_bool('task_relevant', True,
+flags.DEFINE_bool('task_relevant', False,
                   'Whether or not to predict task relevant features')
 
 if __name__ == '__main__':
@@ -45,7 +45,7 @@ if __name__ == '__main__':
 
     vae = TRFModel(FLAGS.num_rays, FLAGS.seq_length, 
                    FLAGS.pred_length, var_samples=30,
-                   epochs=50, batch_size=256)
+                   epochs=30, batch_size=500)
 
     if TRAINED:
         # load weights into new model

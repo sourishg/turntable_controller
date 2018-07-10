@@ -29,7 +29,7 @@ def get_dataset(filename):
             parts = lines[i + j + FLAGS.seq_length].split(" ")
             # y1.append(parts[2:FLAGS.num_rays+2:1])
             if FLAGS.task_relevant:
-                y1.append(get_task_relevant_feature(parts[2:FLAGS.num_rays+2:1], 25))
+                y1.append(get_task_relevant_feature(parts[2:FLAGS.num_rays+2:1], 30))
             else:
                 y1.append([1.0 - float(parts[idx])/5.0 for idx in range(2, FLAGS.num_rays + 2, 1)])
             u1.append(parts[1])

@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D, RepeatVector, LSTM, Add, TimeDistributed, Concatenate, CuDNNLSTM
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D, RepeatVector, LSTM, Add, TimeDistributed, Concatenate, CuDNNLSTM, Dropout
 from keras.models import Model
 from keras.losses import mse
 from keras import backend as K
@@ -38,14 +38,18 @@ class TRFModel:
             self.latent_dim = 1
         else:
             self.output_dim = self.num_rays
-            self.latent_dim = 3
+            self.latent_dim = 2
+
+    def _compute_kl_loss(self, z_mean, z_log_var):
+        loss = -0.5 * (1 + z_log_var - K.square(z_mean) - K.exp(z_log_var))
+        loss = K.sum(loss, axis=-1)
+        return loss
 
     def _vae_loss_function(self, y_true, y_pred):
-        kl_loss = -0.5 * (1 + self.z_log_var - K.square(self.z_mean) - K.exp(self.z_log_var))
-        kl_loss = K.sum(kl_loss, axis=-1)
-        kl_loss = K.mean(kl_loss, axis=-1)
+        kl_loss = self._compute_kl_loss(self.z_mean, self.z_log_var)
+        # kl_loss = K.mean(kl_loss, axis=-1)
+        
         mse_loss = mse(y_true, y_pred)
-        mse_loss *= (self.H)
         return K.mean(mse_loss + kl_loss)
         # return mse_loss
         # return kl_loss
@@ -60,54 +64,55 @@ class TRFModel:
 
         z_mean, z_log_var = args
         batch = K.shape(z_mean)[0]
-        steps = K.int_shape(z_mean)[1]
-        dim = K.int_shape(z_mean)[2]
+        dim = K.int_shape(z_mean)[1]
         # by default, random_normal has mean=0 and std=1.0
-        epsilon = K.random_normal(shape=(batch, steps, dim))
+        epsilon = K.random_normal(shape=(batch, dim))
         return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
     def _get_prev_controls(self, controls):
         prev_controls = K.tile(controls[:, :self.H], [1, self.latent_dim])
-        prev_controls = K.expand_dims(prev_controls, axis=-1)
         return prev_controls
 
     def _unpack_output(self, y):
         return np.reshape(y, (self.F, self.output_dim))
 
     def _build_latent_model(self, input_rays, input_controls):
-        enc1 = CuDNNLSTM(self.num_rays, return_sequences=True, input_shape=self.input_rays_shape)(input_rays)
-        enc2 = CuDNNLSTM(80, return_sequences=True)(enc1)
+        enc2 = CuDNNLSTM(80, return_sequences=True, input_shape=self.input_rays_shape)(input_rays)
         enc3 = CuDNNLSTM(40, return_sequences=True)(enc2)
         enc4 = CuDNNLSTM(20, return_sequences=True)(enc3)
-
-        self.z_mean = TimeDistributed(Dense(self.latent_dim, name='z_mean', input_shape=(self.H, 20)))(enc4)
-        self.z_log_var = TimeDistributed(Dense(self.latent_dim, name='z_log_var', input_shape=(self.H, 20)))(enc4)
-        self.z_enc = Lambda(self._sampling, name='z')([self.z_mean, self.z_log_var])
+        enc5 = CuDNNLSTM(self.latent_dim, return_sequences=True)(enc4)
 
         prev_controls = Lambda(self._get_prev_controls)(input_controls)
-        d1 = Flatten()(self.z_enc)
-        d2 = Lambda(lambda x : K.expand_dims(x, axis=-1))(d1)
-        self.zc_enc = Flatten()(Multiply()([d2, prev_controls]))
+        enc6 = Multiply()([Flatten()(enc5), prev_controls])
 
-        self.encoder = Model([input_rays, input_controls], [self.z_mean, self.z_log_var, self.z_enc, self.zc_enc], name='latent_model')
-        self.encoder.summary()
+        self.z_mean = Dense(self.H * self.latent_dim, name='z_mean')(enc6)
+        self.z_log_var = Dense(self.H * self.latent_dim, name='z_log_var')(enc6)
+
+        return Model([input_rays, input_controls], [self.z_mean, self.z_log_var], name='latent_model')
 
     def _state_transition(self, y, z, u):
-        yz = Concatenate()([y, z])
-        z1 = Dense(self.H * self.latent_dim)(yz)
-        z2 = Dense(self.H * self.latent_dim, activation='tanh')(z1)
-        return z2
+        '''
+        u1 = Lambda(lambda x : K.tile(x, [1, self.H * self.latent_dim]))(u)
+        z1 = Multiply()([z, u1])
+        z2 = Dense(self.num_rays, activation='tanh')(z1)
+        z3 = Add()([z2, y])
+        z_out = Dense(self.H * self.latent_dim)(z3)
+        '''
+        y1 = Dense(self.H * self.latent_dim)(y)
+        u1 = Dense(self.H * self.latent_dim)(u)
+        z1 = Dense(self.H * self.latent_dim)(z)
+        return Add()([z1, u1, y1])
 
-    def _forward_model(self, prev_y, z, u):
+    def _forward_model(self, prev_y, z_mean, z_std, u):
         outputs = None
         if FLAGS.task_relevant:
-            zu = Concatenate()([z, u, prev_y])
-            dec1 = Dense(20, activation='tanh')(zu)
-            dec2 = Dense(40, activation='tanh')(dec1)
-            dec3 = Dense(80, activation='tanh')(dec2)
-            dec4 = Dense(self.num_rays, activation='tanh')(dec3)
-            outputs = Dense(self.output_dim, activation='relu')(dec4)
+            zu = Concatenate()([z, u])
+            dec1 = Dense(self.num_rays)(zu)
+            dec2 = Dense(self.num_rays)(prev_y)
+            dec3 = Multiply()([dec1, dec2])
+            outputs = Dense(self.output_dim, activation='tanh')(dec3)
         else:
+            z = Lambda(self._sampling)([z_mean, z_std])
             zu = Concatenate()([z, u])
             dec1 = Dense(self.output_dim, activation='tanh')(zu)
             y1 = Lambda(lambda x : K.expand_dims(x, axis=-1))(prev_y)
@@ -121,8 +126,10 @@ class TRFModel:
         return outputs
 
     def _build_transition_model(self, input_rays, input_controls):
-        latent_inputs = Input(shape=(self.H * self.latent_dim, ), name='z_sampling')
-        z = latent_inputs
+        latent_mean = Input(shape=(self.H * self.latent_dim,))
+        latent_std = Input(shape=(self.H * self.latent_dim,))
+        z_mean = latent_mean
+        z_std = latent_std
         prev_y = Lambda(lambda x : x[:, -1, :])(input_rays)
         outputs = []
 
@@ -131,27 +138,31 @@ class TRFModel:
 
         for i in range(self.F):
             u = Lambda(lambda x : K.expand_dims(x[:, self.H + i], axis=-1))(input_controls)
-            y_pred = self._forward_model(prev_y, z, u)
+            y_pred = self._forward_model(prev_y, z_mean, z_std, u)
             outputs.append(y_pred)
             if i != self.F - 1:
-                z = self._state_transition(y_pred, z, u)
+                z_mean = self._state_transition(y_pred, z_mean, u)
+                z_std = self._state_transition(y_pred, z_std, u)
                 prev_y = y_pred
 
         outputs_flat = outputs[0]
         for i in range(1, self.F, 1):
             outputs_flat = Concatenate()([outputs_flat, outputs[i]])
 
-        self.decoder = Model([input_rays, input_controls, latent_inputs], outputs_flat, name='decoder')
-        self.decoder.summary()
+        return Model([input_rays, input_controls, latent_mean, latent_std], outputs_flat, name='decoder')
 
     def _build_model(self):
         input_rays = Input(shape=self.input_rays_shape)
         input_controls = Input(shape=self.input_control_shape)
 
-        self._build_latent_model(input_rays, input_controls)
-        self._build_transition_model(input_rays, input_controls)
+        self.encoder = self._build_latent_model(input_rays, input_controls)
+        self.encoder.summary()
 
-        outputs = self.decoder([input_rays, input_controls, self.encoder([input_rays, input_controls])[3]])
+        self.decoder = self._build_transition_model(input_rays, input_controls)
+        self.decoder.summary()
+
+        latent_mean, latent_std = self.encoder([input_rays, input_controls])
+        outputs = self.decoder([input_rays, input_controls, latent_mean, latent_std])
         
         self.vae = Model([input_rays, input_controls], outputs, name='vae')
         self.vae.summary()
