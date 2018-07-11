@@ -3,52 +3,25 @@ from __future__ import print_function
 import numpy as np
 import matplotlib.pyplot as plt
 import cv2
-# setup logging
-import logging
-logging.basicConfig(level = logging.INFO)
 
 # import the package
-import pyrealsense as pyrs
+import pyrealsense2 as rs
 
 class DepthCamera:
-    def __init__(self, fps):
-        # start the service - also available as context manager
-        self.serv = pyrs.Service()
-        self.fps = fps
-        # create a device from device id and streams of interest
-        self.cam = self.serv.Device(device_id = 0, streams = [pyrs.stream.DepthStream(fps = fps)])
-
-
-    def __del__(self):
-        # stop camera and service
-        self.cam.stop()
-        self.serv.stop()
-
-
-    def _convert_z16_to_bgr(self, frame):
-        '''
-        Performs depth histogram normalization
-
-        This raw Python implementation is slow. See here for a fast implementation using Cython:
-        https://github.com/pupil-labs/pupil/blob/master/pupil_src/shared_modules/cython_methods/methods.pyx
-        '''
-        hist = np.histogram(frame, bins=0x10000)[0]
-        hist = np.cumsum(hist)
-        hist -= hist[0]
-        rgb_frame = np.empty(frame.shape[:2] + (3,), dtype=np.uint8)
-
-        zeros = frame == 0
-        non_zeros = frame != 0
-
-        f = hist[frame[non_zeros]] * 255 / hist[0xFFFF]
-        rgb_frame[non_zeros, 0] = 255 - f
-        rgb_frame[non_zeros, 1] = 0
-        rgb_frame[non_zeros, 2] = f
-        rgb_frame[zeros, 0] = 0
-        rgb_frame[zeros, 1] = 255
-        rgb_frame[zeros, 2] = 0
-
-        return rgb_frame
+    def __init__(self, width, height, fps):
+        try:
+            # Create a context object. This object owns the handles to all connected realsense devices
+            self.width = width
+            self.height = height
+            self.fps = fps
+            self.pipeline = rs.pipeline()
+            self.config = rs.config()
+            self.config.enable_stream(rs.stream.depth, width, height, rs.format.z16, fps)
+            self.config.enable_stream(rs.stream.color, width, height, rs.format.bgr8, fps)
+            self.pipeline.start(self.config)
+        except Exception as e:
+            print(e)
+            pass
 
 
     def _convert_z16_to_z8(self, frame):
@@ -68,25 +41,32 @@ class DepthCamera:
 
 
     def get_depth_raw(self):
-        self.cam.wait_for_frames()
-        d = self.cam.depth * self.cam.depth_scale
-        # d = cv2.applyColorMap(d.astype(np.uint8), cv2.COLORMAP_RAINBOW)
-        return d
+        frames = self.pipeline.wait_for_frames()
+        depth_frame = frames.get_depth_frame()
+        depth_image = np.asanyarray(depth_frame.get_data())
+        return depth_frame, depth_image
 
 
-    def get_depth_normalized_rgb(self):
-        self.cam.wait_for_frames()
-        return self._convert_z16_to_bgr(self.cam.depth)
-
-
-    def get_depth_normalized_z8(self):
-        self.cam.wait_for_frames()
-        return self._convert_z16_to_z8(self.cam.depth)
+    def get_depth_z8(self):
+        frames = self.pipeline.wait_for_frames()
+        depth_frame = frames.get_depth_frame()
+        depth_image = np.asanyarray(depth_frame.get_data())
+        depth_image_z8 = cv2.convertScaleAbs(depth_image, alpha=0.03)
+        return depth_frame, depth_image_z8
 
 
     def get_central_range(self, half_width):
-        self.cam.wait_for_frames()
-        d = np.array(self.cam.depth * self.cam.depth_scale)
-        x1 = d.shape[0]/2 - half_width
-        x2 = d.shape[0]/2 + half_width + 1
-        return np.mean(d[x1:x2:1][:], axis=0)
+        frames = self.pipeline.wait_for_frames()
+        depth_frame = frames.get_depth_frame()
+        band = []
+        if depth_frame:
+            for y in range(self.height / 2 - half_width, self.height / 2 + half_width, 1):
+                row = []
+                for x in range(self.width):
+                    d = depth_frame.get_distance(x, y)
+                    row.append(d)
+                band.append(row)
+            band = np.array(band).astype('float32')
+        else:
+            band = np.zeros(self.width)
+        return np.mean(band, axis=0)
