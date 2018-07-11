@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from vae import VAE
+from model import TRFModel
 
 import time
 import math
@@ -14,23 +14,40 @@ import sys
 import pybullet as p
 import pybullet_data
 
+from tensorflow.python.platform import flags
+
+TRAINED = True
+
+FLAGS = flags.FLAGS
+
+flags.DEFINE_integer('seq_length', 5,
+                     'Length of input sequence')
+flags.DEFINE_integer('pred_length', 5,
+                     'Length of prediction')
+flags.DEFINE_integer('num_rays', 100,
+                     'Length of prediction')
+flags.DEFINE_float('train_val_split', 0.8,
+                   'Training/validation split ratio')
+flags.DEFINE_bool('task_relevant', True,
+                  'Whether or not to predict task relevant features')
+
 # Constants
 PI = 3.14159
-num_obstacles = 20
-H = 8  # no of past observations
-F = 4  # no of future predictions
+num_obstacles = 10
+H = FLAGS.seq_length  # no of past observations
+F = FLAGS.pred_length  # no of future predictions
 
 # Control params
 max_angular_velocity = 1.0  # control input sampled from [-max, max]
 cur_state = -1.047  # initial state
 dt = 0.1  # time increment
 T = 10  # total time for one control input
-M = np.linspace(-max_angular_velocity, max_angular_velocity, num=10)
+M = np.linspace(-max_angular_velocity, max_angular_velocity, num=20)
 
 # LIDAR params
 lidar_pos = (0.0, 0.0, 0.2)
 theta_range = np.deg2rad(120.0)
-num_rays = 100  # discretization of rays
+num_rays = FLAGS.num_rays  # discretization of rays
 num_samples = 30 # no of variational samples
 lidar_range = 5.0
 theta_inc = theta_range / float(num_rays)
@@ -115,7 +132,7 @@ def get_range_reading(theta):
         # if no hit
         if rayTestInfo[i][0] == -1:
             d = lidar_range
-        ranges.append(d)
+        ranges.append(1 - d/lidar_range)
     # Draw debug rays
     for i in range(0, len(rayTos), 5):
         p.addUserDebugLine(lidar_pos, rayTos[i], [1,0,0], lifeTime=0.6)
@@ -135,23 +152,26 @@ def init_history():
         prev_ranges.append(ranges)
         prev_controls.append(u)
 
-def get_central_mean_distance(ranges):
-    x1 = num_rays/2 - 25
-    x2 = num_rays/2 + 25
-    return np.mean(ranges[x1:x2:1])
+def get_tr_features(ranges, half_width):
+    ret = []
+    l = FLAGS.num_rays / 2 - half_width
+    u = FLAGS.num_rays / 2 + half_width
+    for r in ranges:
+        d = np.amax(r[l:u])
+        ret.append(d)
+    return np.array(ret).astype('float32')
 
 def get_risk_metric(y):
-    return get_central_mean_distance(y[F-1])
+    return y[F-1][0]
 
 def next_control(model):
     global prev_ranges, prev_controls
-    x = np.asarray(prev_ranges[-H:]).flatten('F')
+    x = np.array(prev_ranges[-H:]).astype('float32')
     distances = []
     y_pred = []
     for i in range(M.shape[0]):
         u = np.array(prev_controls[-H:])
-        u = np.append(u, np.full(F, M[i]))
-        u = np.tile(u, num_rays)
+        u = np.append(u, np.full(F, M[i])).astype('float32')
         y = model.predict(x, u)
         
         #d = y[F-1][num_rays/2]
@@ -161,7 +181,7 @@ def next_control(model):
         print("u = %f, d = %f" % (M[i], d))
         distances.append(d)
         y_pred.append(y)
-    idx = np.argmax(np.array(distances))
+    idx = np.argmin(np.array(distances))
     print("Next control:", M[idx])
     return y_pred[idx], M[idx]
 
@@ -173,8 +193,8 @@ def simulate_controller(u):
         cur_state = next_state(cur_state, u)
         prev_ranges.append(ranges)
         prev_controls.append(u)
-        d = get_central_mean_distance(ranges)
-        print("Min dist:", d)
+        d = get_tr_features([ranges], 30)[0]
+        print("Central dist:", d)
     return d, prev_ranges[-F:]
 
 if __name__ == '__main__':
@@ -182,26 +202,24 @@ if __name__ == '__main__':
     p.setRealTimeSimulation(1)
 
     create_random_world()
-    #create_world()
-    vae = VAE(num_rays, H, F, num_samples)
-    vae.load_weights("vae_weights.h5")
+    # create_world()
+    vae = TRFModel(num_rays, H, F, num_samples)
+    vae.load_weights("vae_weights_tr.h5")
     init_history()
-    d = 0.0
+    d = 1.0
     min_thresh = 4.5
-    while d < min_thresh:
+    while d > 0.1:
         y_pred, u = next_control(vae)
-        d, y_true = simulate_controller(u)
-        print("Current min distance:", d)
-        '''
+        d, prev_gt_ranges = simulate_controller(u)
+        y_true = get_tr_features(prev_gt_ranges, 30)
+        print("Current d/ Predicted d:", d, y_pred[F-1])
+        
         print("Plotting graphs...")
         fig = plt.figure()
-        plots = []
+        plt.ylim((0.0, 1.0))
         for z in range(F):
-            ax = fig.add_subplot(2, F/2 + 1, z+1)
-            plots.append(ax)
-        for z in range(F):
-            plots[z].plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], [float(u) for u in y_pred[z]], 'b.')
-            plots[z].plot([j * np.rad2deg(theta_inc) for j in range(num_rays)], [float(u) for u in y_true[z]], 'r.')
+            plt.plot([j for j in range(F)], [float(u) for u in y_pred], 'b.')
+            plt.plot([j for j in range(F)], [float(u) for u in y_true], 'r.')
         plt.show()
-        '''
+        
     time.sleep(2)

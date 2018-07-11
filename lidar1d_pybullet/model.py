@@ -106,11 +106,13 @@ class TRFModel:
     def _forward_model(self, prev_y, z_mean, z_std, u):
         outputs = None
         if FLAGS.task_relevant:
+            z = Lambda(self._sampling)([z_mean, z_std])
             zu = Concatenate()([z, u])
-            dec1 = Dense(self.num_rays)(zu)
-            dec2 = Dense(self.num_rays)(prev_y)
-            dec3 = Multiply()([dec1, dec2])
-            outputs = Dense(self.output_dim, activation='tanh')(dec3)
+            dec1 = Dense(self.num_rays, activation='tanh')(zu)
+            dec2 = Dense(self.num_rays, activation='relu')(prev_y)
+            dec3 = Add()([dec1, dec2])
+            dec4 = Dense(50, activation='tanh')(dec3)
+            outputs = Dense(self.output_dim, activation='relu')(dec4)
         else:
             z = Lambda(self._sampling)([z_mean, z_std])
             zu = Concatenate()([z, u])
@@ -133,8 +135,8 @@ class TRFModel:
         prev_y = Lambda(lambda x : x[:, -1, :])(input_rays)
         outputs = []
 
-        if FLAGS.task_relevant:
-            prev_y = Dense(self.output_dim, activation='relu')(prev_y)
+        # if FLAGS.task_relevant:
+        #    prev_y = Dense(self.output_dim)(prev_y)
 
         for i in range(self.F):
             u = Lambda(lambda x : K.expand_dims(x[:, self.H + i], axis=-1))(input_controls)
@@ -195,7 +197,7 @@ class TRFModel:
     def plot_tr_results(self, x_test, u_test, y_test):
         for k in range(0, y_test.shape[0], 1):
             fig = plt.figure()
-            plt.ylim((0.0, 1.0))
+            plt.ylim((-1.0, 1.0))
             y_true = y_test[k]
             for i in range(self.num_samples):
                 #_, _, z = self.encoder.predict(np.array([x_test[k]]), batch_size=1)
@@ -237,12 +239,9 @@ class TRFModel:
             plt.show()
 
     def predict(self, x, u):
-        '''
         y_pred = []
         for i in range(self.num_samples):
-            _, _, z = self.encoder.predict([np.array([x,]),np.array([u,])], batch_size=1)
-            y_pred.append(self.decoder.predict(z, batch_size=1)[0])
+            y_pred.append(self.vae.predict([np.array([x,]), np.array([u,])], batch_size=1)[0])
         y_pred = np.asarray(y_pred)
         y = np.mean(y_pred, axis=0)
         return self._unpack_output(y)
-        '''
