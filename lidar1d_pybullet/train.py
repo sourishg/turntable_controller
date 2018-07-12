@@ -19,7 +19,7 @@ flags.DEFINE_integer('num_rays', 100,
                      'Length of prediction')
 flags.DEFINE_float('train_val_split', 0.8,
                    'Training/validation split ratio')
-flags.DEFINE_bool('task_relevant', True,
+flags.DEFINE_bool('task_relevant', False,
                   'Whether or not to predict task relevant features')
 
 if __name__ == '__main__':
@@ -38,14 +38,15 @@ if __name__ == '__main__':
         y_train, y_val = y[train_idx, :], y[val_idx, :]
         u_train, u_val = u[train_idx, :], u[val_idx, :]
 
+    x_test, y_test, u_test = get_dataset(sys.argv[2])
+
+    if not TRAINED:
         print(x_train.shape, y_train.shape, u_train.shape)
         print(x_val.shape, y_val.shape, u_val.shape)
 
-    x_test, y_test, u_test = get_dataset(sys.argv[2])
-
     vae = TRFModel(FLAGS.num_rays, FLAGS.seq_length, 
                    FLAGS.pred_length, var_samples=30,
-                   epochs=30, batch_size=256)
+                   epochs=10, batch_size=256)
 
     if TRAINED:
         # load weights into new model
