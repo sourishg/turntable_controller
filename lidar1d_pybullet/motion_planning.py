@@ -42,7 +42,7 @@ max_angular_velocity = 1.0  # control input sampled from [-max, max]
 cur_state = -1.047  # initial state
 dt = 0.1  # time increment
 T = 10  # total time for one control input
-M = np.linspace(-max_angular_velocity, max_angular_velocity, num=20)
+M = np.linspace(-max_angular_velocity, max_angular_velocity, num=10)
 
 # LIDAR params
 lidar_pos = (0.0, 0.0, 0.2)
@@ -188,7 +188,7 @@ def next_control(model):
 def simulate_controller(u):
     global cur_state, prev_ranges, prev_controls
     d = 0.0
-    for i in range(F):
+    for i in range(1):
         ranges = get_range_reading(cur_state)
         cur_state = next_state(cur_state, u)
         prev_ranges.append(ranges)
@@ -208,12 +208,12 @@ if __name__ == '__main__':
     init_history()
     d = 1.0
     min_thresh = 4.5
-    while d > 0.1:
+    while d > 1.0 - 4.5/5.0:
         y_pred, u = next_control(vae)
         d, prev_gt_ranges = simulate_controller(u)
         y_true = get_tr_features(prev_gt_ranges, 30)
         print("Current d/ Predicted d:", d, y_pred[F-1])
-        
+        '''
         print("Plotting graphs...")
         fig = plt.figure()
         plt.ylim((0.0, 1.0))
@@ -221,5 +221,5 @@ if __name__ == '__main__':
             plt.plot([j for j in range(F)], [float(u) for u in y_pred], 'b.')
             plt.plot([j for j in range(F)], [float(u) for u in y_true], 'r.')
         plt.show()
-        
+        '''
     time.sleep(2)

@@ -9,14 +9,14 @@ import sys
 PI = 3.14159
 num_obstacles = 10
 world_samples = 1  # no of random worlds
-control_samples = 100  # no of observations in each world
+control_samples = 50  # no of observations in each world
 
 # Control params
 max_angular_velocity = 1.0  # control input sampled from [-max, max]
 init_theta = 0.0  # initial state
 dt = 0.1  # time increment
 T = 10  # total time for one control input
-M = np.linspace(-max_angular_velocity, max_angular_velocity, num=20)
+M = np.linspace(-max_angular_velocity, max_angular_velocity, num=10)
 
 # LIDAR params
 lidar_pos = (0.0, 0.0, 0.2)
