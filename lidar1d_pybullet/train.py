@@ -4,14 +4,14 @@ import numpy as np
 import tensorflow as tf
 
 from tensorflow.python.platform import flags
-from prepare_data import get_dataset
+from prepare_data import get_dataset_training, get_dataset_testing
 from model import TRFModel
 
-TRAINED = True
+TRAINED = False
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer('seq_length', 5,
+flags.DEFINE_integer('seq_length', 10,
                      'Length of input sequence')
 flags.DEFINE_integer('pred_length', 5,
                      'Length of prediction')
@@ -27,7 +27,7 @@ if __name__ == '__main__':
     test_file = sys.argv[2]
 
     if not TRAINED:
-        x, y, u = get_dataset(sys.argv[1])
+        x, y, u = get_dataset_training(sys.argv[1])
         idx = np.arange(x.shape[0])
         np.random.shuffle(idx)
         train_samples = int(FLAGS.train_val_split * x.shape[0])
@@ -38,7 +38,7 @@ if __name__ == '__main__':
         y_train, y_val = y[train_idx, :], y[val_idx, :]
         u_train, u_val = u[train_idx, :], u[val_idx, :]
 
-    x_test, y_test, u_test = get_dataset(sys.argv[2])
+    x_test, y_test, u_test = get_dataset_training(sys.argv[2])
 
     if not TRAINED:
         print(x_train.shape, y_train.shape, u_train.shape)
@@ -46,7 +46,7 @@ if __name__ == '__main__':
 
     vae = TRFModel(FLAGS.num_rays, FLAGS.seq_length, 
                    FLAGS.pred_length, var_samples=30,
-                   epochs=10, batch_size=256)
+                   epochs=20, batch_size=1000)
 
     if TRAINED:
         # load weights into new model
