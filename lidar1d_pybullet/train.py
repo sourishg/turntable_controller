@@ -7,7 +7,7 @@ from tensorflow.python.platform import flags
 from prepare_data import get_dataset_training, get_dataset_testing
 from model import TRFModel
 
-TRAINED = True
+TRAINED = False
 
 FLAGS = flags.FLAGS
 
@@ -27,7 +27,7 @@ if __name__ == '__main__':
     test_file = sys.argv[2]
 
     if not TRAINED:
-        x, y, u = get_dataset_training(sys.argv[1])
+        x, y, u = get_dataset_training(train_file)
         idx = np.arange(x.shape[0])
         np.random.shuffle(idx)
         train_samples = int(FLAGS.train_val_split * x.shape[0])
@@ -38,7 +38,7 @@ if __name__ == '__main__':
         y_train, y_val = y[train_idx, :], y[val_idx, :]
         u_train, u_val = u[train_idx, :], u[val_idx, :]
 
-    x_test, y_test, u_test = get_dataset_training(sys.argv[2])
+    x_test, y_test, u_test = get_dataset_training(test_file)
 
     if not TRAINED:
         print(x_train.shape, y_train.shape, u_train.shape)
@@ -46,18 +46,18 @@ if __name__ == '__main__':
 
     vae = TRFModel(FLAGS.num_rays, FLAGS.seq_length, 
                    FLAGS.pred_length, var_samples=30,
-                   epochs=15, batch_size=1000)
+                   epochs=10, batch_size=1000)
 
     if TRAINED:
         # load weights into new model
         if FLAGS.task_relevant:
             vae.load_weights("vae_weights_tr.h5")
         else:
-            vae.load_weights("vae_weights.h5")
+            vae.load_weights("vae_weights_p2.h5")
     else:
-        vae.fit(x_train, x_val,
-                y_train, y_val,
-                u_train, u_val)
+        vae.train_model(x_train, x_val,
+                        y_train, y_val,
+                        u_train, u_val)
 
     if FLAGS.task_relevant:
         vae.plot_tr_results(x_test, u_test, y_test)
