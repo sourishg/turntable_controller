@@ -45,7 +45,7 @@ class TRFModel:
 
     def _vae_loss_function(self, y_true, y_pred):
         kl_loss = self._compute_kl_loss(self.z_mean, self.z_log_var)
-        kl_loss = K.sum(kl_loss, axis=-1)
+        kl_loss = 1e-04 * K.mean(kl_loss, axis=-1)
         
         mse_loss = mse(y_true, y_pred)
         return mse_loss + kl_loss
@@ -81,7 +81,9 @@ class TRFModel:
         enc3 = CuDNNLSTM(20, return_sequences=True)(enc2)
 
         self.z_mean = TimeDistributed(Dense(self.latent_dim, name='z_mean'), input_shape=(K.int_shape(enc3)[1], K.int_shape(enc3)[2]))(enc3)
-        self.z_log_var = TimeDistributed(Dense(self.latent_dim, name='z_log_var'), input_shape=(K.int_shape(enc3)[1], K.int_shape(enc3)[2]))(enc3)
+        z_std = TimeDistributed(Dense(self.latent_dim, name='z_log_var'), input_shape=(K.int_shape(enc3)[1], K.int_shape(enc3)[2]))(enc3)
+
+        self.z_log_var = Lambda(lambda x: x - 5.0)(z_std)
 
         return Model([input_rays, input_controls], [self.z_mean, self.z_log_var], name='latent_model')
 
@@ -89,17 +91,18 @@ class TRFModel:
         prev_y = Input(shape=(self.output_dim,))
         control = Input(shape=(1,))
         z = Input(shape=(self.latent_dim,))
-        u = Lambda(lambda x : K.tile(x, [1, self.latent_dim]))(control)
+        u = Lambda(lambda x: K.tile(x, [1, self.latent_dim]))(control)
         zu = Concatenate()([z, u])
-        dec1 = Dense(self.output_dim, activation='sigmoid')(zu)
-        y1 = Lambda(lambda x : K.expand_dims(x, axis=-1))(prev_y)
+        dec1 = Dense(self.output_dim, activation='tanh')(zu)
         dec2 = Reshape((self.output_dim, 1), input_shape=(self.output_dim,))(dec1)
-        dec4 = CuDNNLSTM(1, return_sequences=True, input_shape=(self.output_dim, 1))(y1)
+
+        y = Lambda(lambda x: K.expand_dims(x, axis=-1))(prev_y)
+        dec3 = CuDNNLSTM(1, return_sequences=True, input_shape=(self.output_dim, 1))(y)
+        dec4 = CuDNNLSTM(1, return_sequences=True)(dec3)
         dec5 = CuDNNLSTM(1, return_sequences=True)(dec4)
-        dec6 = CuDNNLSTM(1, return_sequences=True)(dec5)
-        dec3 = Multiply()([dec2, dec6])
-        dec7 = Reshape((self.output_dim,), input_shape=(self.output_dim, 1))(dec3)
-        outputs = Dense(self.output_dim, activation='relu')(dec7)
+        dec6 = Multiply()([dec2, dec5])
+        dec8 = Reshape((self.output_dim,), input_shape=(self.output_dim, 1))(dec6)
+        outputs = Dense(self.output_dim, activation='relu')(dec8)
 
         return Model([prev_y, control, z], outputs)
 
@@ -118,9 +121,9 @@ class TRFModel:
             if i >= self.H:
                 prev_y = pred_y
             else:
-                prev_y = Lambda(lambda x : x[:, i, :])(input_rays)
-            z_mean_t = Lambda(lambda x : x[:, i+1, :])(z_mean)
-            z_std_t = Lambda(lambda x : x[:, i+1, :])(z_std)
+                prev_y = Lambda(lambda x: x[:, i, :])(input_rays)
+            z_mean_t = Lambda(lambda x: x[:, i+1, :])(z_mean)
+            z_std_t = Lambda(lambda x: x[:, i+1, :])(z_std)
             z = Lambda(self._sampling)([z_mean_t, z_std_t])
             u = Lambda(lambda x : K.expand_dims(x[:, i], axis=-1))(input_controls)
             pred_y = self.gen_model([prev_y, u, z])

@@ -7,11 +7,11 @@ from tensorflow.python.platform import flags
 from prepare_data import get_dataset_training, get_dataset_testing
 from model import TRFModel
 
-TRAINED = False
+TRAINED = True
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer('seq_length', 10,
+flags.DEFINE_integer('seq_length', 5,
                      'Length of input sequence')
 flags.DEFINE_integer('pred_length', 5,
                      'Length of prediction')
@@ -46,7 +46,7 @@ if __name__ == '__main__':
 
     vae = TRFModel(FLAGS.num_rays, FLAGS.seq_length, 
                    FLAGS.pred_length, var_samples=30,
-                   epochs=20, batch_size=1000)
+                   epochs=15, batch_size=1000)
 
     if TRAINED:
         # load weights into new model
