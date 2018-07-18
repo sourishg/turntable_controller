@@ -1,32 +1,22 @@
 import sys
-
 import numpy as np
-import tensorflow as tf
-
-from tensorflow.python.platform import flags
-from prepare_data import get_dataset_training, get_dataset_testing
+import matplotlib.pyplot as plt
+from prepare_data import get_dataset_training, get_task_relevant_feature
 from model import TRFModel
+import params
 
-TRAINED = False
+FLAGS = params.FLAGS
+H = FLAGS.seq_length
+F = FLAGS.pred_length
+num_rays = FLAGS.num_rays
+num_samples = params.VARIATIONAL_SAMPLES
 
-FLAGS = flags.FLAGS
-
-flags.DEFINE_integer('seq_length', 5,
-                     'Length of input sequence')
-flags.DEFINE_integer('pred_length', 5,
-                     'Length of prediction')
-flags.DEFINE_integer('num_rays', 100,
-                     'Length of prediction')
-flags.DEFINE_float('train_val_split', 0.8,
-                   'Training/validation split ratio')
-flags.DEFINE_bool('task_relevant', False,
-                  'Whether or not to predict task relevant features')
 
 if __name__ == '__main__':
     train_file = sys.argv[1]
     test_file = sys.argv[2]
 
-    if not TRAINED:
+    if not params.TRAINED:
         x, y, u = get_dataset_training(train_file)
         idx = np.arange(x.shape[0])
         np.random.shuffle(idx)
@@ -40,26 +30,87 @@ if __name__ == '__main__':
 
     x_test, y_test, u_test = get_dataset_training(test_file)
 
-    if not TRAINED:
+    if not params.TRAINED:
         print(x_train.shape, y_train.shape, u_train.shape)
         print(x_val.shape, y_val.shape, u_val.shape)
 
-    vae = TRFModel(FLAGS.num_rays, FLAGS.seq_length, 
-                   FLAGS.pred_length, var_samples=30,
-                   epochs=10, batch_size=1000)
+    model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
+                     FLAGS.pred_length, var_samples=30,
+                     epochs=10, batch_size=1000, task_relevant=FLAGS.task_relevant)
 
-    if TRAINED:
+    if params.TRAINED:
         # load weights into new model
         if FLAGS.task_relevant:
-            vae.load_weights("vae_weights_tr.h5")
+            model.load_weights("vae_weights_tr_p2.h5")
         else:
-            vae.load_weights("vae_weights_p2.h5")
+            model.load_weights("vae_weights_p2.h5")
     else:
-        vae.train_model(x_train, x_val,
-                        y_train, y_val,
-                        u_train, u_val)
+        model.train_model(x_train, x_val,
+                          y_train, y_val,
+                          u_train, u_val)
+
+    gen_model = model.get_gen_model()
+    vae = model.get_vae_model()
 
     if FLAGS.task_relevant:
-        vae.plot_tr_results(x_test, u_test, y_test)
+        for k in range(0, y_test.shape[0], 1):
+            fig = plt.figure()
+            plt.ylim((-1.0, 1.0))
+            y_true = y_test[k]
+            for i in range(num_samples):
+                if params.USE_ONLY_DECODER:
+                    prev_y = get_task_relevant_feature(x_test[k][0], FLAGS.tr_half_width)
+                    outputs = []
+                    for p in range(H + F - 1):
+                        z = np.random.standard_normal(model.latent_dim)
+                        u = u_test[k][p]
+                        y_pred = gen_model.predict([np.array([prev_y, ]),
+                                                    np.array([u, ]),
+                                                    np.array([z, ])],
+                                                   batch_size=1)[0]
+                        outputs.append(y_pred)
+                        prev_y = y_pred
+
+                    plt.plot([j for j in range(H + F - 1)], [float(u) for u in outputs], 'b.')
+                else:
+                    y_pred = vae.predict([np.array([x_test[k], ]), np.array([u_test[k], ])], batch_size=1)[0]
+                    plt.plot([j for j in range(H + F - 1)], [float(u) for u in y_pred], 'b.')
+
+            plt.plot([j for j in range(H + F - 1)], [float(u) for u in y_true], 'r.')
+
+            plt.show()
     else:
-        vae.plot_results(x_test, u_test, y_test)
+        for k in range(0, y_test.shape[0], 1):
+            fig = plt.figure(figsize=(15, 8))
+            y = np.reshape(y_test[k], (H + F - 1, model.output_dim))
+            plots = []
+            num_plots = H + F - 1
+            for p in range(num_plots):
+                ax = fig.add_subplot(3, num_plots / 3 + 1, p + 1)
+                ax.set_ylim([0, 1.0])
+                ax.set_title("Timestep " + str(p + 1))
+                plots.append(ax)
+
+            for i in range(num_samples):
+                if params.USE_ONLY_DECODER:
+                    prev_y = x_test[k][0]
+                    for p in range(num_plots):
+                        z = np.random.standard_normal(model.latent_dim)
+                        u = u_test[k][p]
+                        y_pred = gen_model.predict([np.array([prev_y, ]),
+                                                    np.array([u, ]),
+                                                    np.array([z, ])],
+                                                   batch_size=1)[0]
+                        prev_y = y_pred
+
+                        plots[p].plot([j for j in range(num_rays)], [float(u) for u in y_pred], 'b.')
+                else:
+                    y_pred = vae.predict([np.array([x_test[k], ]), np.array([u_test[k], ])], batch_size=1)
+                    y_pred = np.reshape(y_pred[0], (H + F - 1, model.output_dim))
+                    for p in range(num_plots):
+                        plots[p].plot([j for j in range(num_rays)], [float(u) for u in y_pred[p]], 'b.')
+
+            for p in range(num_plots):
+                plots[p].plot([j for j in range(num_rays)], [float(u) for u in y[p]], 'r.')
+
+            plt.show()

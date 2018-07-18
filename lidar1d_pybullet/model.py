@@ -1,36 +1,31 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Conv1D, UpSampling1D, Flatten, MaxPooling1D, RepeatVector, LSTM, Add, TimeDistributed, Concatenate, CuDNNLSTM, Dropout
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Flatten, LSTM, Add, TimeDistributed, Concatenate, CuDNNLSTM
 from keras.models import Model
 from keras.losses import mse
 from keras import backend as K
-from keras.engine.topology import Layer
-from keras.callbacks import LambdaCallback
 
-import tensorflow as tf
-from tensorflow.python.platform import flags
-
+import params
 import numpy as np
-import matplotlib.pyplot as plt
-import os
-import sys
 
-FLAGS = flags.FLAGS
+FLAGS = params.FLAGS
 
 class TRFModel:
     def __init__(self,
                  num_rays,
                  H, F,
                  var_samples, 
-                 epochs=10, batch_size=128):
+                 epochs=10, batch_size=128,
+                 task_relevant=False):
         self.num_rays = num_rays
         self.H = H
         self.F = F
         self.num_samples = var_samples
         self.epochs = epochs
         self.batch_size = batch_size
+        self.task_relevant = task_relevant
 
-        if FLAGS.task_relevant:
+        if self.task_relevant:
             self.output_dim = 1
             self.latent_dim = 1
         else:
@@ -43,6 +38,11 @@ class TRFModel:
 
         self.training_phase = 0
 
+    def _get_task_relevant_feature(self, y):
+        lo = int(FLAGS.num_rays) / 2 - int(FLAGS.tr_half_width)
+        hi = int(FLAGS.num_rays) / 2 + int(FLAGS.tr_half_width)
+        return K.max(y[:, lo:hi], axis=-1, keepdims=True)
+
     def _compute_kl_loss(self, z_mean, z_log_var):
         loss = 1 + z_log_var - K.square(z_mean) - K.exp(z_log_var)
         loss = K.sum(loss, axis=-1)
@@ -52,7 +52,7 @@ class TRFModel:
         kl_loss = 0
         if self.training_phase == 2:
             kl_loss = self._compute_kl_loss(self.z_mean, self.z_log_var)
-            kl_loss = 1e-03 * K.mean(kl_loss, axis=-1)
+            kl_loss = FLAGS.latent_multiplier * K.mean(kl_loss, axis=-1)
         
         mse_loss = mse(y_true, y_pred)
         return mse_loss + kl_loss
@@ -95,7 +95,7 @@ class TRFModel:
         self.z_mean = TimeDistributed(Dense(self.latent_dim, name='z_mean'), input_shape=(K.int_shape(enc3)[1], K.int_shape(enc3)[2]))(enc3)
         z_std = TimeDistributed(Dense(self.latent_dim, name='z_log_var'), input_shape=(K.int_shape(enc3)[1], K.int_shape(enc3)[2]))(enc3)
 
-        self.z_log_var = Lambda(lambda x: x - 5.0)(z_std)
+        self.z_log_var = Lambda(lambda x: x + FLAGS.latent_std_min)(z_std)
 
         return Model(input_rays, [self.z_mean, self.z_log_var], name='latent_model')
 
@@ -140,6 +140,8 @@ class TRFModel:
                 prev_y = pred_y
             else:
                 prev_y = Lambda(lambda x: x[:, i, :])(input_rays)
+                if self.task_relevant:
+                    prev_y = Lambda(self._get_task_relevant_feature)(prev_y)
             z_mean_t = Lambda(lambda x: x[:, i+1, :])(z_mean)
             z_std_t = Lambda(lambda x: x[:, i+1, :])(z_std)
             if self.training_phase == 0:
@@ -175,15 +177,18 @@ class TRFModel:
                 batch_size=self.batch_size,
                 validation_data=([x_val, u_val], y_val))
         # serialize weights to HDF5
-        if FLAGS.task_relevant:
-            self.vae.save_weights("vae_weights_tr.h5")
+        if self.task_relevant:
+            self.vae.save_weights("vae_weights_tr_p0.h5")
         else:
             self.vae.save_weights("vae_weights_p0.h5")
         print("Saved weights phase", self.training_phase)
 
         self.training_phase = 1
         self.vae = self._build_vae_model()
-        self.vae.load_weights("vae_weights_p0.h5")
+        if self.task_relevant:
+            self.vae.load_weights("vae_weights_tr_p0.h5")
+        else:
+            self.vae.load_weights("vae_weights_p0.h5")
         self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
         self.vae.summary()
         self.vae.fit([x_train, u_train],
@@ -192,15 +197,18 @@ class TRFModel:
                      batch_size=self.batch_size,
                      validation_data=([x_val, u_val], y_val))
         # serialize weights to HDF5
-        if FLAGS.task_relevant:
-            self.vae.save_weights("vae_weights_tr.h5")
+        if self.task_relevant:
+            self.vae.save_weights("vae_weights_tr_p1.h5")
         else:
             self.vae.save_weights("vae_weights_p1.h5")
         print("Saved weights phase", self.training_phase)
 
         self.training_phase = 2
         self.vae = self._build_vae_model()
-        self.vae.load_weights("vae_weights_p1.h5")
+        if self.task_relevant:
+            self.vae.load_weights("vae_weights_tr_p1.h5")
+        else:
+            self.vae.load_weights("vae_weights_p1.h5")
         self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
         self.vae.summary()
         self.vae.fit([x_train, u_train],
@@ -209,84 +217,11 @@ class TRFModel:
                      batch_size=self.batch_size,
                      validation_data=([x_val, u_val], y_val))
         # serialize weights to HDF5
-        if FLAGS.task_relevant:
-            self.vae.save_weights("vae_weights_tr.h5")
+        if self.task_relevant:
+            self.vae.save_weights("vae_weights_tr_p2.h5")
         else:
             self.vae.save_weights("vae_weights_p2.h5")
         print("Saved weights phase", self.training_phase)
-
-    def plot_tr_results(self, x_test, u_test, y_test):
-        for k in range(0, y_test.shape[0], 1):
-            fig = plt.figure()
-            plt.ylim((-1.0, 1.0))
-            y_true = y_test[k]
-            for i in range(self.num_samples):
-                y_pred = self.vae.predict([np.array([x_test[k],]),np.array([u_test[k],])], batch_size=1)[0]
-                plt.plot([j for j in range(self.F)], [float(u) for u in y_pred], 'b.')
-            
-            plt.plot([j for j in range(self.F)], [float(u) for u in y_true], 'r.')
-
-            plt.show()
-
-    def plot_results(self, x_test, u_test, y_test):
-        for k in range(0, y_test.shape[0], 1):
-            fig = plt.figure(figsize=(15, 8))
-            y1 = self._unpack_output(y_test[k])
-            plots = []
-            num_plots = self.H + self.F - 1
-            for p in range(num_plots):
-                ax = fig.add_subplot(3, num_plots/3 + 1, p+1)
-                ax.set_ylim([0, 1.0])
-                ax.set_title("Timestep " + str(p+1))
-                plots.append(ax)
-            
-            for i in range(self.num_samples):
-                '''
-                y_pred = self.vae.predict([np.array([x_test[k],]),np.array([u_test[k],])], batch_size=1)
-                y_pred = self._unpack_output(y_pred[0])
-                for p in range(num_plots):
-                    plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y_pred[p]], 'b.')
-
-                '''
-                prev_y = x_test[k][0]
-                for p in range(num_plots):
-                    z = np.random.standard_normal(self.latent_dim)
-                    u = u_test[k][p]
-                    y_pred = self.gen_model.predict([np.array([prev_y, ]), np.array([u, ]), np.array([z, ])], batch_size=1)[0]
-                    prev_y = y_pred
-
-                    plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y_pred], 'b.')
-
-            for p in range(num_plots):
-                plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y1[p]], 'r.')
-
-            plt.show()
-
-    def custom_function(self, x_test, u_test, y_test):
-        for k in range(0, y_test.shape[0], 1):
-            fig = plt.figure(figsize=(15, 8))
-            y = np.reshape(y_test[k], (self.F, self.num_rays))
-            plots = []
-            for p in range(self.F):
-                ax = fig.add_subplot(3, self.F / 3 + 1, p + 1)
-                ax.set_ylim([0, 1.0])
-                ax.set_title("Timestep " + str(p + 1))
-                plots.append(ax)
-
-            for i in range(self.num_samples):
-                prev_y = x_test[k][-1]
-                for p in range(self.F):
-                    z = np.random.standard_normal(self.latent_dim)
-                    u = u_test[k][self.H - 1 + p]
-                    y_pred = self.gen_model.predict([np.array([prev_y, ]), np.array([u, ]), np.array([z, ])], batch_size=1)[0]
-                    prev_y = y_pred
-
-                    plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y_pred], 'b.')
-
-            for p in range(self.F):
-                plots[p].plot([j for j in range(self.num_rays)], [float(u) for u in y[p]], 'r.')
-
-            plt.show()
 
     def predict(self, x, u):
         y_pred = []
@@ -297,8 +232,7 @@ class TRFModel:
         return self._unpack_output(y)
 
     def get_gen_model(self):
-        '''
-        if self.gen_model is None:
-            self.gen_model = self._build_generative_model()
-        '''
         return self.gen_model
+
+    def get_vae_model(self):
+        return self.vae
