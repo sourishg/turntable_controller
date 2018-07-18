@@ -7,6 +7,7 @@ from keras import backend as K
 
 import params
 import numpy as np
+import tensorflow as tf
 
 FLAGS = params.FLAGS
 
@@ -38,6 +39,9 @@ class TRFModel:
 
         self.training_phase = 0
 
+        self.sess = tf.Session()
+        K.set_session(self.sess)
+
     def _get_task_relevant_feature(self, y):
         lo = int(FLAGS.num_rays) / 2 - int(FLAGS.tr_half_width)
         hi = int(FLAGS.num_rays) / 2 + int(FLAGS.tr_half_width)
@@ -54,7 +58,11 @@ class TRFModel:
             kl_loss = self._compute_kl_loss(self.z_mean, self.z_log_var)
             kl_loss = FLAGS.latent_multiplier * K.mean(kl_loss, axis=-1)
         
-        mse_loss = mse(y_true, y_pred)
+        # mse_loss = mse(y_true, y_pred)
+        delta_y = y_pred - y_true
+        error_y = K.switch(K.greater_equal(delta_y, 0), lambda: 0.5 * delta_y, lambda: -delta_y)
+        mse_loss = K.mean(K.square(error_y), axis=-1)
+
         return mse_loss + kl_loss
         # return mse_loss
         # return kl_loss

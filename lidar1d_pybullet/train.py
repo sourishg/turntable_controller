@@ -10,7 +10,8 @@ H = FLAGS.seq_length
 F = FLAGS.pred_length
 num_rays = FLAGS.num_rays
 num_samples = params.VARIATIONAL_SAMPLES
-
+epochs = 30
+batch_size = 1000
 
 if __name__ == '__main__':
     train_file = sys.argv[1]
@@ -35,8 +36,8 @@ if __name__ == '__main__':
         print(x_val.shape, y_val.shape, u_val.shape)
 
     model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
-                     FLAGS.pred_length, var_samples=30,
-                     epochs=10, batch_size=1000, task_relevant=FLAGS.task_relevant)
+                     FLAGS.pred_length, var_samples=num_samples,
+                     epochs=epochs, batch_size=batch_size, task_relevant=FLAGS.task_relevant)
 
     if params.TRAINED:
         # load weights into new model
