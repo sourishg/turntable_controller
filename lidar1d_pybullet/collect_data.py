@@ -4,25 +4,26 @@ import time
 import math
 import numpy as np
 import sys
+import params
 
 # Constants
 PI = 3.14159
-num_obstacles = 10
-world_samples = 1  # no of random worlds
-control_samples = 50  # no of observations in each world
+num_obstacles = params.NUM_OBSTACLES
+world_samples = params.WORLD_SAMPLES  # no of random worlds
+control_samples = params.CONTROL_SAMPLES  # no of observations in each world
 
 # Control params
-max_angular_velocity = 1.0  # control input sampled from [-max, max]
+max_angular_velocity = params.MAX_ANGULAR_VELOCITY  # control input sampled from [-max, max]
 init_theta = 0.0  # initial state
-dt = 0.1  # time increment
-T = 10  # total time for one control input
+dt = params.TIME_INCREMENT  # time increment
+T = params.TOTAL_CONTROL_TIMESTEPS  # total time for one control input
 M = np.linspace(-max_angular_velocity, max_angular_velocity, num=10)
 
 # LIDAR params
-lidar_pos = (0.0, 0.0, 0.2)
-theta_range = np.deg2rad(120.0)
-num_rays = 100  # discretization of rays
-lidar_range = 5.0
+lidar_pos = params.LIDAR_POS
+theta_range = np.deg2rad(params.LIDAR_THETA_RANGE_DEG)
+num_rays = params.NUM_RAYS  # discretization of rays
+lidar_range = params.LIDAR_RANGE
 
 # Obstacle params
 mass = 0
@@ -57,7 +58,7 @@ def createRandomWorld():
     np.random.shuffle(x)
     np.random.shuffle(y)
 
-    obstCylinderId = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.2)
+    obstCylinderId = p.createCollisionShape(p.GEOM_CYLINDER, radius=radius)
     UIDs = []
     for i in range(x.shape[0]):
         obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[x[i], y[i], 0],

@@ -1,6 +1,7 @@
 from __future__ import print_function
 
 from model import TRFModel
+from prepare_data import get_task_relevant_feature
 
 import time
 import math
@@ -13,43 +14,29 @@ import sys
 
 import pybullet as p
 import pybullet_data
+import params
 
-from tensorflow.python.platform import flags
-
-TRAINED = True
-
-FLAGS = flags.FLAGS
-
-flags.DEFINE_integer('seq_length', 5,
-                     'Length of input sequence')
-flags.DEFINE_integer('pred_length', 5,
-                     'Length of prediction')
-flags.DEFINE_integer('num_rays', 100,
-                     'Length of prediction')
-flags.DEFINE_float('train_val_split', 0.8,
-                   'Training/validation split ratio')
-flags.DEFINE_bool('task_relevant', True,
-                  'Whether or not to predict task relevant features')
+FLAGS = params.FLAGS
 
 # Constants
 PI = 3.14159
-num_obstacles = 10
+num_obstacles = params.NUM_OBSTACLES
 H = FLAGS.seq_length  # no of past observations
 F = FLAGS.pred_length  # no of future predictions
+num_samples = params.VARIATIONAL_SAMPLES  # no of variational samples
 
 # Control params
-max_angular_velocity = 1.0  # control input sampled from [-max, max]
+max_angular_velocity = params.MAX_ANGULAR_VELOCITY  # control input sampled from [-max, max]
 cur_state = -1.047  # initial state
-dt = 0.1  # time increment
-T = 10  # total time for one control input
-M = np.linspace(-max_angular_velocity, max_angular_velocity, num=10)
+dt = params.TIME_INCREMENT  # time increment
+T = params.TOTAL_CONTROL_TIMESTEPS  # total time for one control input
+M = np.linspace(-max_angular_velocity, max_angular_velocity, num=5)
 
 # LIDAR params
-lidar_pos = (0.0, 0.0, 0.2)
-theta_range = np.deg2rad(120.0)
+lidar_pos = params.LIDAR_POS
+theta_range = np.deg2rad(params.LIDAR_THETA_RANGE_DEG)
 num_rays = FLAGS.num_rays  # discretization of rays
-num_samples = 30 # no of variational samples
-lidar_range = 5.0
+lidar_range = params.LIDAR_RANGE
 theta_inc = theta_range / float(num_rays)
 
 # Obstacle params
@@ -62,12 +49,14 @@ prev_controls = []
 p.connect(p.GUI)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
+
 def norm_angle(theta):
     while theta > PI:
         theta = theta - 2 * PI
     while theta <= -PI:
         theta = theta + 2 * PI
     return theta
+
 
 def create_world():
     # Create ground plane
@@ -84,6 +73,7 @@ def create_world():
     obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2, 1.0, 0], baseOrientation=[0, 0, 0, 1])
     obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2, 1.5, 0], baseOrientation=[0, 0, 0, 1])
     obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2, 2, 0], baseOrientation=[0, 0, 0, 1])
+
 
 def create_random_world():
     # Create ground plane
@@ -103,13 +93,14 @@ def create_random_world():
     np.random.shuffle(x)
     np.random.shuffle(y)
 
-    obstCylinderId = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.2)
+    obstCylinderId = p.createCollisionShape(p.GEOM_CYLINDER, radius=radius)
     UIDs = []
     for i in range(x.shape[0]):
         obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[x[i], y[i], 0],
                                     baseOrientation=[0, 0, 0, 1])
         UIDs.append(obstUID)
     return UIDs
+
 
 def get_batch_ray_to(theta):
     rays = []
@@ -120,6 +111,7 @@ def get_batch_ray_to(theta):
         rays.append(ray)
         theta = norm_angle(theta + theta_inc)
     return rays
+
 
 def get_range_reading(theta):
     ranges = []
@@ -138,8 +130,10 @@ def get_range_reading(theta):
         p.addUserDebugLine(lidar_pos, rayTos[i], [1,0,0], lifeTime=0.6)
     return ranges
 
+
 def next_state(state, u):
     return norm_angle(state + u * dt)
+
 
 def init_history():
     global cur_state
@@ -152,19 +146,17 @@ def init_history():
         prev_ranges.append(ranges)
         prev_controls.append(u)
 
-def get_tr_features(ranges, half_width):
-    ret = []
-    l = FLAGS.num_rays / 2 - half_width
-    u = FLAGS.num_rays / 2 + half_width
-    for r in ranges:
-        d = np.amax(r[l:u])
-        ret.append(d)
-    return np.array(ret).astype('float32')
 
 def get_risk_metric(y):
-    return y[F-1][0]
+    return y[F-1]
 
-def next_control(model):
+
+def get_desampled_y(sampled_y):
+    y = np.array(sampled_y).astype('float32')
+    return np.mean(y, axis=0)
+
+
+def next_control(models):
     global prev_ranges, prev_controls
     x = np.array(prev_ranges[-H:]).astype('float32')
     distances = []
@@ -172,54 +164,90 @@ def next_control(model):
     for i in range(M.shape[0]):
         u = np.array(prev_controls[-H:])
         u = np.append(u, np.full(F, M[i])).astype('float32')
-        y = model.predict(x, u)
-        
-        #d = y[F-1][num_rays/2]
-        #d = np.amin(y[F-1][y[F-1] > 0])
+        sampled_y = predict(x, u, models)
+        y = get_desampled_y(sampled_y)
         d = get_risk_metric(y)
 
         print("u = %f, d = %f" % (M[i], d))
         distances.append(d)
-        y_pred.append(y)
+        y_pred.append(sampled_y)
     idx = np.argmin(np.array(distances))
     print("Next control:", M[idx])
     return y_pred[idx], M[idx]
 
+
 def simulate_controller(u):
     global cur_state, prev_ranges, prev_controls
     d = 0.0
-    for i in range(1):
-        ranges = get_range_reading(cur_state)
+    for i in range(F):
         cur_state = next_state(cur_state, u)
+        ranges = get_range_reading(cur_state)
         prev_ranges.append(ranges)
         prev_controls.append(u)
-        d = get_tr_features([ranges], 30)[0]
+        d = get_task_relevant_feature(ranges, FLAGS.tr_half_width)
         print("Central dist:", d)
     return d, prev_ranges[-F:]
 
+
+def predict(x, control, models):
+    model, model_tr = models
+    gen_model = model.get_gen_model()
+    vae_model_tr = model_tr.get_vae_model()
+    init_outputs = []
+    prev_y = x[-1]
+    for p in range(F):
+        z = np.random.standard_normal(model.latent_dim)
+        u = control[H - 1 + p]
+        y_pred = gen_model.predict([np.array([prev_y, ]), np.array([u, ]), np.array([z, ])], batch_size=1)[0]
+        init_outputs.append(y_pred)
+        prev_y = y_pred
+
+    init_outputs = np.array(init_outputs).astype('float32')
+    prev_x = np.array(x).astype('float32')
+    x_enc = np.concatenate((prev_x, init_outputs))
+    sampled_y = []
+    for i in range(num_samples):
+        y_pred = vae_model_tr.predict([np.array([x_enc, ]), np.array([control, ])], batch_size=1)[0]
+        y = y_pred[H - 1:]
+        sampled_y.append(y)
+    return sampled_y
+
+
 if __name__ == '__main__':
+
+    model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
+                     FLAGS.pred_length, var_samples=num_samples,
+                     task_relevant=False)
+
+    model_tr = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
+                        FLAGS.pred_length, var_samples=num_samples,
+                        task_relevant=True)
+
+    model_tr.load_weights("vae_weights_tr_p2.h5")
+    model.load_weights("vae_weights_p2.h5")
+
     p.setGravity(0, 0, -9.8)
     p.setRealTimeSimulation(1)
 
     create_random_world()
     # create_world()
-    vae = TRFModel(num_rays, H, F, num_samples)
-    vae.load_weights("vae_weights_tr.h5")
     init_history()
     d = 1.0
     min_thresh = 4.5
-    while d > 1.0 - 4.5/5.0:
-        y_pred, u = next_control(vae)
+    while d > 1.0 - 5.5/5.0:
+        y_pred, u = next_control((model, model_tr))
         d, prev_gt_ranges = simulate_controller(u)
-        y_true = get_tr_features(prev_gt_ranges, 30)
         print("Current d/ Predicted d:", d, y_pred[F-1])
-        '''
+
         print("Plotting graphs...")
+        y_true = []
+        for y in prev_gt_ranges:
+            y_true.append(get_task_relevant_feature(y, FLAGS.tr_half_width))
         fig = plt.figure()
         plt.ylim((0.0, 1.0))
-        for z in range(F):
-            plt.plot([j for j in range(F)], [float(u) for u in y_pred], 'b.')
-            plt.plot([j for j in range(F)], [float(u) for u in y_true], 'r.')
+        for z in range(num_samples):
+            plt.plot([j for j in range(F)], [float(u) for u in y_pred[z]], 'b.')
+        plt.plot([j for j in range(F)], [float(u) for u in y_true], 'r.')
         plt.show()
-        '''
+
     time.sleep(2)

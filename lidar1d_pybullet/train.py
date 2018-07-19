@@ -56,7 +56,7 @@ if __name__ == '__main__':
     if FLAGS.task_relevant:
         for k in range(0, y_test.shape[0], 1):
             fig = plt.figure()
-            plt.ylim((-1.0, 1.0))
+            plt.ylim((0.0, 1.0))
             y_true = y_test[k]
             for i in range(num_samples):
                 if params.USE_ONLY_DECODER:

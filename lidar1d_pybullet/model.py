@@ -28,10 +28,10 @@ class TRFModel:
 
         if self.task_relevant:
             self.output_dim = 1
-            self.latent_dim = 1
         else:
             self.output_dim = self.num_rays
-            self.latent_dim = 10
+
+        self.latent_dim = 10
 
         self.encoder = None
         self.gen_model = None
@@ -60,7 +60,7 @@ class TRFModel:
         
         # mse_loss = mse(y_true, y_pred)
         delta_y = y_pred - y_true
-        error_y = K.switch(K.greater_equal(delta_y, 0), lambda: 0.5 * delta_y, lambda: -delta_y)
+        error_y = K.switch(K.greater_equal(delta_y, 0), lambda: 0.8 * delta_y, lambda: -delta_y)
         mse_loss = K.mean(K.square(error_y), axis=-1)
 
         return mse_loss + kl_loss
@@ -230,14 +230,6 @@ class TRFModel:
         else:
             self.vae.save_weights("vae_weights_p2.h5")
         print("Saved weights phase", self.training_phase)
-
-    def predict(self, x, u):
-        y_pred = []
-        for i in range(self.num_samples):
-            y_pred.append(self.vae.predict([np.array([x,]), np.array([u,])], batch_size=1)[0])
-        y_pred = np.asarray(y_pred)
-        y = np.amax(y_pred, axis=0)
-        return self._unpack_output(y)
 
     def get_gen_model(self):
         return self.gen_model

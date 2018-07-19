@@ -19,11 +19,11 @@ if __name__ == '__main__':
 
     model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
                      FLAGS.pred_length, var_samples=num_samples,
-                     epochs=15, batch_size=1000, task_relevant=False)
+                     task_relevant=False)
 
     model_tr = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
                         FLAGS.pred_length, var_samples=num_samples,
-                        epochs=15, batch_size=1000, task_relevant=True)
+                        task_relevant=True)
 
     model_tr.load_weights("vae_weights_tr_p2.h5")
     model.load_weights("vae_weights_p2.h5")
@@ -45,11 +45,11 @@ if __name__ == '__main__':
         output_dim = num_rays
         if FLAGS.task_relevant:
             output_dim = 1
-            plt.ylim([-1.0, 1.0])
+            plt.ylim([0.0, 1.0])
         else:
             for p in range(F):
                 ax = fig.add_subplot(3, F / 3 + 1, p + 1)
-                ax.set_ylim([0, 1.0])
+                ax.set_ylim([0.0, 1.0])
                 ax.set_title("Timestep " + str(p + 1))
                 plots.append(ax)
 
