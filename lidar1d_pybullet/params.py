@@ -18,7 +18,7 @@ flags.DEFINE_float('latent_std_min', -5.0,
                    'Min log var of latent variables')
 flags.DEFINE_float('tr_half_width', 30,
                    'Half width range of ray from which to select task-relevant feature')
-flags.DEFINE_bool('task_relevant', False,
+flags.DEFINE_bool('task_relevant', True,
                   'Whether or not to predict task relevant features')
 
 TRAINED = False
