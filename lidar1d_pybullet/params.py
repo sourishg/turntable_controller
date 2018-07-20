@@ -14,7 +14,7 @@ flags.DEFINE_float('train_val_split', 0.8,
                    'Training/validation split ratio')
 flags.DEFINE_float('latent_multiplier', 1e-03,
                    'Multiplier for KL cost')
-flags.DEFINE_float('latent_std_min', -7.0,
+flags.DEFINE_float('latent_std_min', -5.0,
                    'Min log var of latent variables')
 flags.DEFINE_float('tr_half_width', 30,
                    'Half width range of ray from which to select task-relevant feature')

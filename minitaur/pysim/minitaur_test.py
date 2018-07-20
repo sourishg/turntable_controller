@@ -18,8 +18,11 @@ def main(unused_args):
       c = p.connect(p.GUI)
   p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
-  params = [0.1903581461951056, 0.0006732219568880068, 0.05018085615283363, 3.219916795483583, 6.2406418167980595, 4.189869754607539]
-  evaluate_func = 'evaluate_desired_motorAngle_2Amplitude4Phase'
+  # params = [0.1903581461951056, 0.0006732219568880068, 0.05018085615283363, 3.219916795483583, 6.2406418167980595, 4.189869754607539]
+  # evaluate_func = 'evaluate_desired_motorAngle_2Amplitude4Phase'
+  params = [0.3, 0.35, 2]
+  evaluate_func = 'evaluate_test_control'
+
   energy_weight = 0.01
 
   finalReturn = evaluate_params(evaluateFunc = evaluate_func, params=params, objectiveParams=[energy_weight], timeStep=timeStep, sleepTime=timeStep)

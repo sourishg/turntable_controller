@@ -51,10 +51,31 @@ def evaluate_desired_motorAngle_hop(i, params):
   joint_values = [a1, 1.57, a2, 1.57, 1.57, a1, 1.57, a2]
   return joint_values
 
+def evaluate_test_control(i, params):
+  amp_s = params[0]
+  amp_e = params[1]
+  init_e = params[2]
+  PI = 3.1415
+  s1 = amp_s * math.sin(4 * PI * i)
+  e1 = amp_e * math.sin(4 * PI * i) + init_e
+  s2 = amp_s * math.sin(4 * PI * i + PI)
+  e2 = amp_e * math.sin(4 * PI * i + PI) + init_e
+  a1 = e1 + s1
+  a2 = e1 - s1
+  a3 = a1
+  a4 = a2
+  a5 = e2 + s2
+  a6 = e2 - s2
+  a7 = a5
+  a8 = a6
+  joint_values = [a1, a2, a3, a4, a5, a6, a7, a8]
+  return joint_values
+
 
 evaluate_func_map['evaluate_desired_motorAngle_8Amplitude8Phase'] = evaluate_desired_motorAngle_8Amplitude8Phase
 evaluate_func_map['evaluate_desired_motorAngle_2Amplitude4Phase'] = evaluate_desired_motorAngle_2Amplitude4Phase
 evaluate_func_map['evaluate_desired_motorAngle_hop'] = evaluate_desired_motorAngle_hop
+evaluate_func_map['evaluate_test_control'] = evaluate_test_control
 
 
 

@@ -60,7 +60,7 @@ class TRFModel:
         
         # mse_loss = mse(y_true, y_pred)
         delta_y = y_pred - y_true
-        error_y = K.switch(K.greater_equal(delta_y, 0), lambda: 0.8 * delta_y, lambda: -delta_y)
+        error_y = K.switch(K.greater_equal(delta_y, 0), lambda: 0.6 * delta_y, lambda: -delta_y)
         mse_loss = K.mean(K.square(error_y), axis=-1)
 
         return mse_loss + kl_loss
@@ -96,34 +96,43 @@ class TRFModel:
         return np.reshape(y, (self.H + self.F - 1, self.output_dim))
 
     def _build_latent_model(self, input_rays):
-        enc1 = CuDNNLSTM(80, return_sequences=True, input_shape=(None, None, self.num_rays), name='lstm_enc1')(input_rays)
-        enc2 = CuDNNLSTM(40, return_sequences=True, name='lstm_enc2')(enc1)
-        enc3 = CuDNNLSTM(20, return_sequences=True, name='lstm_enc3')(enc2)
+        enc1 = TimeDistributed(Dense(80), input_shape=(None, None, self.num_rays))(input_rays)
+        enc2 = TimeDistributed(Dense(40))(enc1)
+        enc3 = TimeDistributed(Dense(20))(enc2)
 
-        self.z_mean = TimeDistributed(Dense(self.latent_dim, name='z_mean'), input_shape=(K.int_shape(enc3)[1], K.int_shape(enc3)[2]))(enc3)
-        z_std = TimeDistributed(Dense(self.latent_dim, name='z_log_var'), input_shape=(K.int_shape(enc3)[1], K.int_shape(enc3)[2]))(enc3)
+        self.z_mean = TimeDistributed(Dense(self.latent_dim, name='z_mean'),
+                                      input_shape=(K.int_shape(enc3)[1], K.int_shape(enc3)[2]))(enc3)
+        z_std = TimeDistributed(Dense(self.latent_dim, name='z_log_var'),
+                                input_shape=(K.int_shape(enc3)[1], K.int_shape(enc3)[2]))(enc3)
 
         self.z_log_var = Lambda(lambda x: x + FLAGS.latent_std_min)(z_std)
 
         return Model(input_rays, [self.z_mean, self.z_log_var], name='latent_model')
 
     def _build_generative_model(self):
-        prev_y = Input(shape=(self.output_dim,), name='prev_y')
+        prev_y = Input(shape=(self.num_rays,), name='prev_y')
         control = Input(shape=(1,), name='control_input')
         z = Input(shape=(self.latent_dim,), name='latent_input')
 
         u = Lambda(lambda x: K.tile(x, [1, self.latent_dim]))(control)
         zu = Concatenate()([z, u])
-        dec1 = Dense(self.output_dim, activation='tanh')(zu)
-        dec2 = Reshape((self.output_dim, 1), input_shape=(self.output_dim,))(dec1)
 
-        y = Lambda(lambda x: K.expand_dims(x, axis=-1))(prev_y)
-        dec3 = CuDNNLSTM(1, return_sequences=True, input_shape=(self.output_dim, 1))(y)
-        dec4 = CuDNNLSTM(1, return_sequences=True)(dec3)
-        dec5 = CuDNNLSTM(1, return_sequences=True)(dec4)
-        dec6 = Multiply()([dec2, dec5])
-        dec8 = Reshape((self.output_dim,), input_shape=(self.output_dim, 1))(dec6)
-        outputs = Dense(self.output_dim, activation='relu')(dec8)
+        if self.task_relevant:
+            dec1 = Dense(self.num_rays)(prev_y)
+            dec2 = Dense(self.num_rays)(dec1)
+            dec3 = Dense(self.num_rays)(dec2)
+            dec4 = Concatenate()([dec3, zu])
+            dec5 = Dense(self.num_rays)(dec4)
+            dec6 = Dense(self.output_dim, activation='tanh')(dec5)
+            outputs = Dense(self.output_dim, activation='relu')(dec6)
+        else:
+            dec1 = Dense(self.output_dim)(prev_y)
+            dec2 = Dense(self.output_dim)(dec1)
+            dec3 = Dense(self.output_dim)(dec2)
+            dec4 = Concatenate()([dec3, zu])
+            dec5 = Dense(self.output_dim)(dec4)
+            dec6 = Dense(self.output_dim, activation='tanh')(dec5)
+            outputs = Dense(self.output_dim, activation='relu')(dec6)
 
         return Model([prev_y, control, z], outputs, name='generative_model')
 
@@ -140,7 +149,6 @@ class TRFModel:
         self.gen_model = self._build_generative_model()
 
         z_mean, z_std = self.encoder(input_rays)
-        z = None
         outputs = []
         prev_y, pred_y = None, None
         for i in range(self.H + self.F - 1):
@@ -148,8 +156,8 @@ class TRFModel:
                 prev_y = pred_y
             else:
                 prev_y = Lambda(lambda x: x[:, i, :])(input_rays)
-                if self.task_relevant:
-                    prev_y = Lambda(self._get_task_relevant_feature)(prev_y)
+                # if self.task_relevant:
+                #     prev_y = Lambda(self._get_task_relevant_feature)(prev_y)
             z_mean_t = Lambda(lambda x: x[:, i+1, :])(z_mean)
             z_std_t = Lambda(lambda x: x[:, i+1, :])(z_std)
             if self.training_phase == 0:
@@ -159,6 +167,8 @@ class TRFModel:
             u = Lambda(lambda x: K.expand_dims(x[:, i], axis=-1))(input_controls)
             pred_y = self.gen_model([prev_y, u, z])
             outputs.append(pred_y)
+            if self.task_relevant:
+                pred_y = Lambda(lambda x: K.tile(x, [1, self.num_rays]))(pred_y)
 
         outputs_flat = outputs[0]
         for i in range(1, self.F + self.H - 1, 1):
@@ -180,10 +190,10 @@ class TRFModel:
         self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
         self.vae.summary()
         self.vae.fit([x_train, u_train],
-                y_train,
-                epochs=self.epochs,
-                batch_size=self.batch_size,
-                validation_data=([x_val, u_val], y_val))
+                     y_train,
+                     epochs=self.epochs,
+                     batch_size=self.batch_size,
+                     validation_data=([x_val, u_val], y_val))
         # serialize weights to HDF5
         if self.task_relevant:
             self.vae.save_weights("vae_weights_tr_p0.h5")
