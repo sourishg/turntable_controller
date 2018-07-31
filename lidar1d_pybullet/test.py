@@ -19,24 +19,16 @@ if __name__ == '__main__':
 
     model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
                      FLAGS.pred_length, var_samples=num_samples,
-                     task_relevant=False)
-
-    model_tr = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
-                        FLAGS.pred_length, var_samples=num_samples,
-                        task_relevant=True)
-
-    model_tr.load_weights("vae_weights_tr_p2.h5")
-    model.load_weights("vae_weights_p2.h5")
-
-    gen_model_tr = model_tr.get_gen_model()
-    vae_model_tr = model_tr.get_vae_model()
-    gen_model = model.get_gen_model()
-    vae_model = model.get_vae_model()
+                     task_relevant=FLAGS.task_relevant)
 
     if FLAGS.task_relevant:
-        latent_dim = model_tr.latent_dim
+        model.load_weights("vae_weights_tr_p2.h5")
     else:
-        latent_dim = model.latent_dim
+        model.load_weights("vae_weights_p2.h5")
+
+    encoder = model.get_encoder_model()
+    decoder = model.get_decoder_model()
+    transition_model = model.get_transition_model()
 
     for k in range(0, y_test.shape[0], 1):
         fig = plt.figure(figsize=(15, 8))
@@ -53,64 +45,28 @@ if __name__ == '__main__':
                 ax.set_title("Timestep " + str(p + 1))
                 plots.append(ax)
 
-        y = np.reshape(y_test[k], (F, output_dim))
+        y_true = np.reshape(y_test[k], (F, output_dim))
 
-        if params.USE_ONLY_DECODER:
-            for i in range(num_samples):
-                prev_y = x_test[k][-1]
-                if FLAGS.task_relevant:
-                    prev_y = get_task_relevant_feature(prev_y, FLAGS.tr_half_width)
-                outputs = []
+        for i in range(num_samples):
+            z_mu, z_std, z = encoder.predict(np.array([x_test[k][H-1], ]), batch_size=1)
+            z = z[0]
+            y_pred = []
+            for j in range(F):
+                u = u_test[k][H-1+j]
+                z = transition_model.predict([np.array([z, ]), np.array([u, ])], batch_size=1)[0]
+                y = decoder.predict(np.array([z, ]), batch_size=1)[0]
+                y_pred.append(y)
+
+            if FLAGS.task_relevant:
+                plt.plot([j for j in range(F)], [float(u) for u in y_pred], 'b.')
+            else:
                 for p in range(F):
-                    z = np.random.standard_normal(latent_dim)
-                    u = u_test[k][H - 1 + p]
-                    if FLAGS.task_relevant:
-                        y_pred = gen_model_tr.predict([np.array([prev_y, ]),
-                                                       np.array([u, ]),
-                                                       np.array([z, ])],
-                                                      batch_size=1)[0]
-                    else:
-                        y_pred = gen_model.predict([np.array([prev_y, ]),
-                                                    np.array([u, ]),
-                                                    np.array([z, ])],
-                                                   batch_size=1)[0]
-                    prev_y = y_pred
-
-                    if not FLAGS.task_relevant:
-                        plots[p].plot([j for j in range(FLAGS.num_rays)], [float(u) for u in y_pred], 'b.')
-                    else:
-                        outputs.append(y_pred)
-                if FLAGS.task_relevant:
-                    plt.plot([j for j in range(F)], [float(u) for u in outputs], 'b.')
-        else:
-            init_outputs = []
-            prev_y = x_test[k][-1]
-            for p in range(F):
-                z = np.random.standard_normal(model.latent_dim)
-                u = u_test[k][H - 1 + p]
-                y_pred = gen_model.predict([np.array([prev_y, ]), np.array([u, ]), np.array([z, ])], batch_size=1)[0]
-                init_outputs.append(y_pred)
-                prev_y = y_pred
-
-            init_outputs = np.array(init_outputs).astype('float32')
-            prev_x = np.array(x_test[k]).astype('float32')
-            x_enc = np.concatenate((prev_x, init_outputs))
-            for i in range(num_samples):
-                if FLAGS.task_relevant:
-                    y_pred = vae_model_tr.predict([np.array([x_enc, ]), np.array([u_test[k], ])], batch_size=1)[0]
-                    outputs = y_pred[H - 1:]
-                    plt.plot([j for j in range(F)], [float(u) for u in outputs], 'b.')
-                else:
-                    y_pred = vae_model.predict([np.array([x_enc, ]), np.array([u_test[k], ])], batch_size=1)[0]
-                    y_pred = np.reshape(y_pred, (H + F - 1, num_rays))
-                    y_pred = y_pred[H - 1:, :]
-                    for p in range(F):
-                        plots[p].plot([j for j in range(num_rays)], [float(u) for u in y_pred[p]], 'b.')
+                    plots[p].plot([j for j in range(num_rays)], [float(u) for u in y_pred[p]], 'b.')
 
         if FLAGS.task_relevant:
             plt.plot([j for j in range(F)], [float(u) for u in y_test[k]], 'r.')
         else:
             for p in range(F):
-                plots[p].plot([j for j in range(FLAGS.num_rays)], [float(u) for u in y[p]], 'r.')
+                plots[p].plot([j for j in range(FLAGS.num_rays)], [float(u) for u in y_true[p]], 'r.')
 
         plt.show()

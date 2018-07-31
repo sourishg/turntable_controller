@@ -12,7 +12,7 @@ flags.DEFINE_integer('num_rays', 100,
                      'Length of prediction')
 flags.DEFINE_float('train_val_split', 0.8,
                    'Training/validation split ratio')
-flags.DEFINE_float('latent_multiplier', 1e-03,
+flags.DEFINE_float('latent_multiplier', 1e-05,
                    'Multiplier for KL cost')
 flags.DEFINE_float('latent_std_min', -5.0,
                    'Min log var of latent variables')
@@ -22,7 +22,6 @@ flags.DEFINE_bool('task_relevant', True,
                   'Whether or not to predict task relevant features')
 
 TRAINED = False
-USE_ONLY_DECODER = False
 VARIATIONAL_SAMPLES = 30
 
 # World and control paramters

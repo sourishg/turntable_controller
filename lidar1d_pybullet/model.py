@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Flatten, LSTM, Add, TimeDistributed, Concatenate, CuDNNLSTM
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Flatten, Dropout, Add, TimeDistributed, Concatenate, CuDNNLSTM
 from keras.models import Model
 from keras.losses import mse
 from keras import backend as K
@@ -31,16 +31,16 @@ class TRFModel:
         else:
             self.output_dim = self.num_rays
 
-        self.latent_dim = 10
+        self.latent_dim = 3
 
         self.encoder = None
         self.gen_model = None
         self.vae = None
 
-        self.training_phase = 0
+        self.kl_loss = 0
+        self.trans_loss = 0
 
-        self.sess = tf.Session()
-        K.set_session(self.sess)
+        self.training_phase = 0
 
     def _get_task_relevant_feature(self, y):
         lo = int(FLAGS.num_rays) / 2 - int(FLAGS.tr_half_width)
@@ -53,19 +53,19 @@ class TRFModel:
         return (-0.5) * loss
 
     def _vae_loss_function(self, y_true, y_pred):
-        kl_loss = 0
-        if self.training_phase == 2:
-            kl_loss = self._compute_kl_loss(self.z_mean, self.z_log_var)
-            kl_loss = FLAGS.latent_multiplier * kl_loss
-        
+        self.kl_loss = self.kl_loss * FLAGS.latent_multiplier
+
+        self.trans_loss = self.trans_loss * 0.01
+
         # mse_loss = mse(y_true, y_pred)
         delta_y = y_pred - y_true
-        error_y = K.switch(K.greater_equal(delta_y, 0), lambda: 0.6 * delta_y, lambda: -delta_y)
+        error_y = K.switch(K.greater_equal(delta_y, 0), lambda: 0.8 * delta_y, lambda: -delta_y)
         mse_loss = K.mean(K.square(error_y), axis=-1)
 
-        return mse_loss + kl_loss
-        # return mse_loss
-        # return kl_loss
+        if self.training_phase == 0:
+            return mse_loss + self.kl_loss
+        else:
+            return mse_loss + self.trans_loss
 
     def _sampling_prior(self, args):
         z_mean, z_log_var = args
@@ -95,18 +95,43 @@ class TRFModel:
     def _unpack_output(self, y):
         return np.reshape(y, (self.H + self.F - 1, self.output_dim))
 
-    def _build_latent_model(self, input_rays):
-        enc1 = TimeDistributed(Dense(80), input_shape=(None, None, self.num_rays))(input_rays)
-        enc2 = TimeDistributed(Dense(40))(enc1)
-        enc3 = TimeDistributed(Dense(20))(enc2)
-        enc4 = Flatten()(enc3)
+    def _build_encoder_model(self):
+        input_ray = Input(shape=(self.num_rays,), name='input_ray')
 
-        z_mean = Dense(self.latent_dim)(enc4)
+        enc1 = Dense(80, input_shape=(None, self.num_rays))(input_ray)
+        enc2 = Dense(60)(enc1)
+        enc3 = Dense(40)(enc2)
+        enc4 = Dense(20)(enc3)
+        z_mean = Dense(self.latent_dim, activation='relu')(enc4)
         z_std = Dense(self.latent_dim)(enc4)
 
         z_log_var = Lambda(lambda x: x + FLAGS.latent_std_min)(z_std)
+        z = Lambda(self._sampling)([z_mean, z_log_var])
 
-        return Model(input_rays, [z_mean, z_log_var], name='latent_model')
+        return Model(input_ray, [z_mean, z_log_var, z], name='encoder_model')
+
+    def _build_transition_model(self):
+        z = Input(shape=(self.latent_dim,), name='z_input')
+        u = Input(shape=(1,), name='u_input')
+
+        zu = Concatenate()([z, u])
+        d1 = Dense(self.num_rays, activation='relu')(zu)
+        d2 = Dense(self.num_rays, activation='relu')(d1)
+        d3 = Dense(self.num_rays, activation='relu')(d2)
+        outputs = Dense(self.latent_dim, activation='relu')(d3)
+
+        return Model([z, u], outputs, name='transition_model')
+
+    def _build_decoder_model(self):
+        z = Input(shape=(self.latent_dim,), name='z_input')
+
+        dec0 = Dense(20, activation='relu')(z)
+        dec1 = Dense(40, activation='relu')(dec0)
+        dec2 = Dense(60, activation='relu')(dec1)
+        dec3 = Dense(80, activation='tanh')(dec2)
+        outputs = Dense(self.output_dim, activation='relu')(dec3)
+
+        return Model(z, outputs, name='decoder_model')
 
     def _build_generative_model(self):
         prev_y = Input(shape=(self.output_dim,), name='prev_y')
@@ -133,46 +158,57 @@ class TRFModel:
 
         return Model([prev_y, control, z], outputs, name='generative_model')
 
-    def _build_transition_encoder(self, input_prev_rays):
-        enc1 = TimeDistributed(Dense(80), input_shape=(None, None, self.num_rays))(input_prev_rays)
-        enc2 = TimeDistributed(Dense(40))(enc1)
-        enc3 = TimeDistributed(Dense(20))(enc2)
-        enc4 = Flatten()(enc3)
-
-        z = Dense(self.num_rays)(enc4)
-
-        return Model(input_prev_rays, z, name='transition_encoder')
-
     def _build_vae_model(self):
         input_rays = Input(shape=(self.H + self.F, self.num_rays), name='input_rays')
         input_controls = Input(shape=(self.H + self.F, ), name='input_controls')
 
-        self.encoder = self._build_latent_model(input_rays)
+        self.encoder = self._build_encoder_model()
+        self.decoder = self._build_decoder_model()
+        self.transition_model = self._build_transition_model()
 
         if self.training_phase == 0:
+            for layer in self.transition_model.layers:
+                layer.trainable = False
+
+        if self.training_phase > 0:
             for layer in self.encoder.layers:
                 layer.trainable = False
 
-        self.z_mean, self.z_log_var = self.encoder(input_rays)
-
-        self.gen_model = self._build_generative_model()
-
         outputs = []
-        prev_y, pred_y = None, None
-        for i in range(self.H + self.F - 1):
-            if i >= self.H:
-                prev_y = pred_y
-            else:
-                prev_y = Lambda(lambda x: x[:, i, :])(input_rays)
-                if self.task_relevant:
-                    prev_y = Lambda(self._get_task_relevant_feature)(prev_y)
+
+        ray_init = Lambda(lambda x: x[:, 0, :])(input_rays)
+        _, _, zp = self.encoder(ray_init)
+
+        for i in range(1, self.H + self.F, 1):
+            ray = Lambda(lambda x: x[:, i, :])(input_rays)
+            z_mean, z_log_var, z = self.encoder(ray)
+
             if self.training_phase == 0:
-                z = Lambda(self._sampling_prior)([self.z_mean, self.z_log_var])
+                self.kl_loss = self.kl_loss + self._compute_kl_loss(z_mean, z_log_var)
+
+            if self.training_phase == 1:
+                ray_prev = Lambda(lambda x: x[:, i - 1, :])(input_rays)
+                u_prev = Lambda(lambda x: K.expand_dims(x[:, i - 1], axis=-1))(input_controls)
+                z_mean_prev, z_log_var_prev, z_prev = self.encoder(ray_prev)
+                zp = self.transition_model([z_prev, u_prev])
+
+                self.trans_loss = self.trans_loss + mse(z, zp)
+
+            if self.training_phase == 2:
+                u_prev = Lambda(lambda x: K.expand_dims(x[:, i - 1], axis=-1))(input_controls)
+                zp = self.transition_model([zp, u_prev])
+
+            if self.training_phase == 0:
+                y = self.decoder(z)
+            elif self.training_phase == 1:
+                if i >= self.H:
+                    y = self.decoder(zp)
+                else:
+                    y = self.decoder(z)
             else:
-                z = Lambda(self._sampling)([self.z_mean, self.z_log_var])
-            u = Lambda(lambda x: K.expand_dims(x[:, i], axis=-1))(input_controls)
-            pred_y = self.gen_model([prev_y, u, z])
-            outputs.append(pred_y)
+                y = self.decoder(zp)
+
+            outputs.append(y)
 
         outputs_flat = outputs[0]
         for i in range(1, self.F + self.H - 1, 1):
@@ -208,9 +244,9 @@ class TRFModel:
         self.training_phase = 1
         self.vae = self._build_vae_model()
         if self.task_relevant:
-            self.vae.load_weights("vae_weights_tr_p0.h5")
+            self.vae.load_weights("vae_weights_tr_p0.h5", by_name=True)
         else:
-            self.vae.load_weights("vae_weights_p0.h5")
+            self.vae.load_weights("vae_weights_p0.h5", by_name=True)
         self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
         self.vae.summary()
         self.vae.fit([x_train, u_train],
@@ -225,25 +261,14 @@ class TRFModel:
             self.vae.save_weights("vae_weights_p1.h5")
         print("Saved weights phase", self.training_phase)
 
-        self.training_phase = 2
-        self.vae = self._build_vae_model()
-        if self.task_relevant:
-            self.vae.load_weights("vae_weights_tr_p1.h5")
-        else:
-            self.vae.load_weights("vae_weights_p1.h5")
-        self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
-        self.vae.summary()
-        self.vae.fit([x_train, u_train],
-                     y_train,
-                     epochs=self.epochs,
-                     batch_size=self.batch_size,
-                     validation_data=([x_val, u_val], y_val))
-        # serialize weights to HDF5
-        if self.task_relevant:
-            self.vae.save_weights("vae_weights_tr_p2.h5")
-        else:
-            self.vae.save_weights("vae_weights_p2.h5")
-        print("Saved weights phase", self.training_phase)
+    def get_encoder_model(self):
+        return self.encoder
+
+    def get_decoder_model(self):
+        return self.decoder
+
+    def get_transition_model(self):
+        return self.transition_model
 
     def get_gen_model(self):
         return self.gen_model

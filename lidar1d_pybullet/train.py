@@ -10,7 +10,7 @@ H = FLAGS.seq_length
 F = FLAGS.pred_length
 num_rays = FLAGS.num_rays
 num_samples = params.VARIATIONAL_SAMPLES
-epochs = 50
+epochs = 30
 batch_size = 1000
 
 if __name__ == '__main__':
@@ -50,7 +50,6 @@ if __name__ == '__main__':
                           y_train, y_val,
                           u_train, u_val)
 
-    gen_model = model.get_gen_model()
     vae = model.get_vae_model()
 
     if FLAGS.task_relevant:
@@ -59,23 +58,8 @@ if __name__ == '__main__':
             plt.ylim((0.0, 1.0))
             y_true = y_test[k]
             for i in range(num_samples):
-                if params.USE_ONLY_DECODER:
-                    prev_y = get_task_relevant_feature(x_test[k][0], FLAGS.tr_half_width)
-                    outputs = []
-                    for p in range(H + F - 1):
-                        z = np.random.standard_normal(model.latent_dim)
-                        u = u_test[k][p]
-                        y_pred = gen_model.predict([np.array([prev_y, ]),
-                                                    np.array([u, ]),
-                                                    np.array([z, ])],
-                                                   batch_size=1)[0]
-                        outputs.append(y_pred)
-                        prev_y = y_pred
-
-                    plt.plot([j for j in range(H + F - 1)], [float(u) for u in outputs], 'b.')
-                else:
-                    y_pred = vae.predict([np.array([x_test[k], ]), np.array([u_test[k], ])], batch_size=1)[0]
-                    plt.plot([j for j in range(H + F - 1)], [float(u) for u in y_pred], 'b.')
+                y_pred = vae.predict([np.array([x_test[k], ]), np.array([u_test[k], ])], batch_size=1)[0]
+                plt.plot([j for j in range(H + F - 1)], [float(u) for u in y_pred], 'b.')
 
             plt.plot([j for j in range(H + F - 1)], [float(u) for u in y_true], 'r.')
 
@@ -93,23 +77,10 @@ if __name__ == '__main__':
                 plots.append(ax)
 
             for i in range(num_samples):
-                if params.USE_ONLY_DECODER:
-                    prev_y = x_test[k][0]
-                    for p in range(num_plots):
-                        z = np.random.standard_normal(model.latent_dim)
-                        u = u_test[k][p]
-                        y_pred = gen_model.predict([np.array([prev_y, ]),
-                                                    np.array([u, ]),
-                                                    np.array([z, ])],
-                                                   batch_size=1)[0]
-                        prev_y = y_pred
-
-                        plots[p].plot([j for j in range(num_rays)], [float(u) for u in y_pred], 'b.')
-                else:
-                    y_pred = vae.predict([np.array([x_test[k], ]), np.array([u_test[k], ])], batch_size=1)
-                    y_pred = np.reshape(y_pred[0], (H + F - 1, model.output_dim))
-                    for p in range(num_plots):
-                        plots[p].plot([j for j in range(num_rays)], [float(u) for u in y_pred[p]], 'b.')
+                y_pred = vae.predict([np.array([x_test[k], ]), np.array([u_test[k], ])], batch_size=1)
+                y_pred = np.reshape(y_pred[0], (H + F - 1, model.output_dim))
+                for p in range(num_plots):
+                    plots[p].plot([j for j in range(num_rays)], [float(u) for u in y_pred[p]], 'b.')
 
             for p in range(num_plots):
                 plots[p].plot([j for j in range(num_rays)], [float(u) for u in y[p]], 'r.')
