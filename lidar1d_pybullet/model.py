@@ -31,16 +31,17 @@ class TRFModel:
         else:
             self.output_dim = self.num_rays
 
-        self.latent_dim = 3
+        self.latent_dim = 10
 
         self.encoder = None
-        self.gen_model = None
+        self.decoder = None
+        self.transition_model = None
         self.vae = None
 
         self.kl_loss = 0
         self.trans_loss = 0
 
-        self.training_phase = 0
+        self.training_phase = 1
 
     def _get_task_relevant_feature(self, y):
         lo = int(FLAGS.num_rays) / 2 - int(FLAGS.tr_half_width)
@@ -55,7 +56,7 @@ class TRFModel:
     def _vae_loss_function(self, y_true, y_pred):
         self.kl_loss = self.kl_loss * FLAGS.latent_multiplier
 
-        self.trans_loss = self.trans_loss * 0.01
+        # self.trans_loss = self.trans_loss * 0.001
 
         # mse_loss = mse(y_true, y_pred)
         delta_y = y_pred - y_true
@@ -102,7 +103,7 @@ class TRFModel:
         enc2 = Dense(60)(enc1)
         enc3 = Dense(40)(enc2)
         enc4 = Dense(20)(enc3)
-        z_mean = Dense(self.latent_dim, activation='relu')(enc4)
+        z_mean = Dense(self.latent_dim)(enc4)
         z_std = Dense(self.latent_dim)(enc4)
 
         z_log_var = Lambda(lambda x: x + FLAGS.latent_std_min)(z_std)
@@ -112,51 +113,31 @@ class TRFModel:
 
     def _build_transition_model(self):
         z = Input(shape=(self.latent_dim,), name='z_input')
-        u = Input(shape=(1,), name='u_input')
+        control = Input(shape=(1,), name='u_input')
+        u = Lambda(lambda x: K.tile(x, [1, self.latent_dim]))(control)
 
         zu = Concatenate()([z, u])
-        d1 = Dense(self.num_rays, activation='relu')(zu)
-        d2 = Dense(self.num_rays, activation='relu')(d1)
-        d3 = Dense(self.num_rays, activation='relu')(d2)
-        outputs = Dense(self.latent_dim, activation='relu')(d3)
+        d1 = Dense(50)(zu)
+        d2 = Dense(50)(d1)
+        d3 = Dense(50)(d2)
+        outputs = Dense(self.latent_dim)(d3)
 
-        return Model([z, u], outputs, name='transition_model')
+        return Model([z, control], outputs, name='transition_model')
 
     def _build_decoder_model(self):
         z = Input(shape=(self.latent_dim,), name='z_input')
 
-        dec0 = Dense(20, activation='relu')(z)
-        dec1 = Dense(40, activation='relu')(dec0)
-        dec2 = Dense(60, activation='relu')(dec1)
+        dec0 = Dense(20, activation='tanh')(z)
+        dec1 = Dense(40, activation='tanh')(dec0)
+        dec2 = Dense(60, activation='tanh')(dec1)
         dec3 = Dense(80, activation='tanh')(dec2)
-        outputs = Dense(self.output_dim, activation='relu')(dec3)
+        dec4 = Dense(self.num_rays, activation='relu')(dec3)
+        if self.task_relevant:
+            outputs = Lambda(self._get_task_relevant_feature)(dec4)
+        else:
+            outputs = Dense(self.output_dim, activation='relu')(dec4)
 
         return Model(z, outputs, name='decoder_model')
-
-    def _build_generative_model(self):
-        prev_y = Input(shape=(self.output_dim,), name='prev_y')
-        control = Input(shape=(1,), name='control_input')
-        z = Input(shape=(self.latent_dim,), name='latent_input')
-
-        u = Lambda(lambda x: K.tile(x, [1, self.latent_dim]))(control)
-        zu = Concatenate()([z, u])
-
-        if self.task_relevant:
-            dec3 = Dense(self.latent_dim)(zu)
-            dec4 = Dense(self.output_dim)(dec3)
-            dec6 = Concatenate()([prev_y, dec4])
-            dec7 = Dense(self.output_dim, activation='tanh')(dec6)
-            outputs = Dense(self.output_dim, activation='relu')(dec7)
-        else:
-            dec1 = Dense(self.output_dim)(prev_y)
-            dec2 = Dense(self.output_dim)(dec1)
-            dec3 = Dense(self.output_dim)(dec2)
-            dec4 = Concatenate()([dec3, zu])
-            dec5 = Dense(self.output_dim)(dec4)
-            dec6 = Dense(self.output_dim, activation='tanh')(dec5)
-            outputs = Dense(self.output_dim, activation='relu')(dec6)
-
-        return Model([prev_y, control, z], outputs, name='generative_model')
 
     def _build_vae_model(self):
         input_rays = Input(shape=(self.H + self.F, self.num_rays), name='input_rays')
@@ -173,42 +154,37 @@ class TRFModel:
         if self.training_phase > 0:
             for layer in self.encoder.layers:
                 layer.trainable = False
+            for layer in self.decoder.layers:
+                layer.trainable = False
 
         outputs = []
 
         ray_init = Lambda(lambda x: x[:, 0, :])(input_rays)
-        _, _, zp = self.encoder(ray_init)
+        zp_mean, zp_std, zp = self.encoder(ray_init)
 
         for i in range(1, self.H + self.F, 1):
             ray = Lambda(lambda x: x[:, i, :])(input_rays)
             z_mean, z_log_var, z = self.encoder(ray)
 
-            if self.training_phase == 0:
-                self.kl_loss = self.kl_loss + self._compute_kl_loss(z_mean, z_log_var)
+            self.kl_loss = self.kl_loss + self._compute_kl_loss(z_mean, z_log_var)
 
             if self.training_phase == 1:
                 ray_prev = Lambda(lambda x: x[:, i - 1, :])(input_rays)
                 u_prev = Lambda(lambda x: K.expand_dims(x[:, i - 1], axis=-1))(input_controls)
                 z_mean_prev, z_log_var_prev, z_prev = self.encoder(ray_prev)
                 zp = self.transition_model([z_prev, u_prev])
+                # zp = Lambda(self._sampling)([zp_mean, zp_std])
+                y = self.decoder(zp)
 
-                self.trans_loss = self.trans_loss + mse(z, zp)
-
-            if self.training_phase == 2:
-                u_prev = Lambda(lambda x: K.expand_dims(x[:, i - 1], axis=-1))(input_controls)
-                zp = self.transition_model([zp, u_prev])
+                self.trans_loss = self.trans_loss + K.square(z - zp)
 
             if self.training_phase == 0:
                 y = self.decoder(z)
-            elif self.training_phase == 1:
-                if i >= self.H:
-                    y = self.decoder(zp)
-                else:
-                    y = self.decoder(z)
-            else:
-                y = self.decoder(zp)
 
             outputs.append(y)
+
+        if self.training_phase == 1:
+            self.trans_loss = K.mean(self.trans_loss, axis=-1)
 
         outputs_flat = outputs[0]
         for i in range(1, self.F + self.H - 1, 1):
@@ -217,7 +193,7 @@ class TRFModel:
         return Model([input_rays, input_controls], outputs_flat, name='vae_model')
 
     def load_weights(self, filename):
-        self.training_phase = 2
+        self.training_phase = 0
         self.vae = self._build_vae_model()
         self.vae.load_weights(filename)
         self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
@@ -225,23 +201,25 @@ class TRFModel:
         print("Loaded weights!")
 
     def train_model(self, x_train, x_val, y_train, y_val, u_train, u_val):
-        print("Training phase:", self.training_phase)
-        self.vae = self._build_vae_model()
-        self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
-        self.vae.summary()
-        self.vae.fit([x_train, u_train],
-                     y_train,
-                     epochs=self.epochs,
-                     batch_size=self.batch_size,
-                     validation_data=([x_val, u_val], y_val))
-        # serialize weights to HDF5
-        if self.task_relevant:
-            self.vae.save_weights("vae_weights_tr_p0.h5")
-        else:
-            self.vae.save_weights("vae_weights_p0.h5")
-        print("Saved weights phase", self.training_phase)
+        if self.training_phase == 0:
+            print("Training phase:", self.training_phase)
+            self.vae = self._build_vae_model()
+            self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
+            self.vae.summary()
+            self.vae.fit([x_train, u_train],
+                         y_train,
+                         epochs=self.epochs,
+                         batch_size=self.batch_size,
+                         validation_data=([x_val, u_val], y_val))
+            # serialize weights to HDF5
+            if self.task_relevant:
+                self.vae.save_weights("vae_weights_tr_p0.h5")
+            else:
+                self.vae.save_weights("vae_weights_p0.h5")
+            print("Saved weights phase", self.training_phase)
 
         self.training_phase = 1
+        print("Training phase:", self.training_phase)
         self.vae = self._build_vae_model()
         if self.task_relevant:
             self.vae.load_weights("vae_weights_tr_p0.h5", by_name=True)
@@ -269,9 +247,6 @@ class TRFModel:
 
     def get_transition_model(self):
         return self.transition_model
-
-    def get_gen_model(self):
-        return self.gen_model
 
     def get_vae_model(self):
         return self.vae

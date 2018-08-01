@@ -22,9 +22,9 @@ if __name__ == '__main__':
                      task_relevant=FLAGS.task_relevant)
 
     if FLAGS.task_relevant:
-        model.load_weights("vae_weights_tr_p2.h5")
+        model.load_weights("vae_weights_tr_p0.h5")
     else:
-        model.load_weights("vae_weights_p2.h5")
+        model.load_weights("vae_weights_p0.h5")
 
     encoder = model.get_encoder_model()
     decoder = model.get_decoder_model()
@@ -49,11 +49,13 @@ if __name__ == '__main__':
 
         for i in range(num_samples):
             z_mu, z_std, z = encoder.predict(np.array([x_test[k][H-1], ]), batch_size=1)
+            z_mu = z_mu[0]
             z = z[0]
             y_pred = []
             for j in range(F):
                 u = u_test[k][H-1+j]
-                z = transition_model.predict([np.array([z, ]), np.array([u, ])], batch_size=1)[0]
+                z_mu = transition_model.predict([np.array([z_mu, ]), np.array([u, ])], batch_size=1)[0]
+                z = z_mu + np.random.standard_normal(model.latent_dim) * z_std[0]
                 y = decoder.predict(np.array([z, ]), batch_size=1)[0]
                 y_pred.append(y)
 

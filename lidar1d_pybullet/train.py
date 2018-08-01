@@ -37,14 +37,14 @@ if __name__ == '__main__':
 
     model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
                      FLAGS.pred_length, var_samples=num_samples,
-                     epochs=epochs, batch_size=batch_size, task_relevant=FLAGS.task_relevant)
+                     epochs=epochs, batch_size=batch_size, task_relevant=False)
 
     if params.TRAINED:
         # load weights into new model
         if FLAGS.task_relevant:
-            model.load_weights("vae_weights_tr_p2.h5")
+            model.load_weights("vae_weights_p1.h5")
         else:
-            model.load_weights("vae_weights_p2.h5")
+            model.load_weights("vae_weights_p1.h5")
     else:
         model.train_model(x_train, x_val,
                           y_train, y_val,
@@ -59,7 +59,11 @@ if __name__ == '__main__':
             y_true = y_test[k]
             for i in range(num_samples):
                 y_pred = vae.predict([np.array([x_test[k], ]), np.array([u_test[k], ])], batch_size=1)[0]
-                plt.plot([j for j in range(H + F - 1)], [float(u) for u in y_pred], 'b.')
+                y_pred = np.reshape(y_pred, (H + F - 1, model.output_dim))
+                y_tr = []
+                for yp in y_pred:
+                    y_tr.append(get_task_relevant_feature(yp, FLAGS.tr_half_width))
+                plt.plot([j for j in range(H + F - 1)], [float(u) for u in y_tr], 'b.')
 
             plt.plot([j for j in range(H + F - 1)], [float(u) for u in y_true], 'r.')
 
