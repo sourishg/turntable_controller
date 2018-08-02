@@ -31,10 +31,13 @@ class TRFModel:
         else:
             self.output_dim = self.num_rays
 
+        self.belief_state_dim = 20
+
         self.latent_dim = 10
 
         self.encoder = None
         self.decoder = None
+        self.latent_model = None
         self.transition_model = None
         self.vae = None
 
@@ -56,7 +59,7 @@ class TRFModel:
     def _vae_loss_function(self, y_true, y_pred):
         self.kl_loss = self.kl_loss * FLAGS.latent_multiplier
 
-        # self.trans_loss = self.trans_loss * 0.001
+        # self.trans_loss = self.trans_loss * 0.01
 
         # mse_loss = mse(y_true, y_pred)
         delta_y = y_pred - y_true
@@ -66,12 +69,12 @@ class TRFModel:
         if self.training_phase == 0:
             return mse_loss + self.kl_loss
         else:
-            return mse_loss + self.trans_loss
+            return K.mean(mse_loss + self.trans_loss)
 
     def _sampling_prior(self, args):
-        z_mean, z_log_var = args
-        batch = K.shape(z_mean)[0]
-        dim = K.int_shape(z_mean)[1]
+        rays = args
+        batch = K.shape(rays)[0]
+        dim = self.latent_dim
         return K.random_normal(shape=(batch, dim))
 
     def _sampling(self, args):
@@ -102,40 +105,41 @@ class TRFModel:
         enc1 = Dense(80, input_shape=(None, self.num_rays))(input_ray)
         enc2 = Dense(60)(enc1)
         enc3 = Dense(40)(enc2)
-        enc4 = Dense(20)(enc3)
-        z_mean = Dense(self.latent_dim)(enc4)
-        z_std = Dense(self.latent_dim)(enc4)
+        outputs = Dense(self.belief_state_dim)(enc3)
+
+        return Model(input_ray, outputs, name='encoder_model')
+
+    def _build_latent_model(self):
+        input_belief_state = Input(shape=(self.belief_state_dim, ), name='input_belief_state')
+
+        b1 = Dense(20)(input_belief_state)
+
+        z_mean = Dense(self.latent_dim)(b1)
+        z_std = Dense(self.latent_dim)(b1)
 
         z_log_var = Lambda(lambda x: x + FLAGS.latent_std_min)(z_std)
         z = Lambda(self._sampling)([z_mean, z_log_var])
 
-        return Model(input_ray, [z_mean, z_log_var, z], name='encoder_model')
+        return Model(input_belief_state, [z_mean, z_log_var, z], name='latent_model')
 
     def _build_transition_model(self):
-        z = Input(shape=(self.latent_dim,), name='z_input')
-        control = Input(shape=(1,), name='u_input')
+        prev_belief_state = Input(shape=(self.belief_state_dim, ), name='prev_belief_state')
+        control = Input(shape=(1, ), name='input_control')
         u = Lambda(lambda x: K.tile(x, [1, self.latent_dim]))(control)
 
-        zu = Concatenate()([z, u])
-        d1 = Dense(50)(zu)
-        d2 = Dense(50)(d1)
-        d3 = Dense(50)(d2)
-        outputs = Dense(self.latent_dim)(d3)
+        bu = Concatenate()([prev_belief_state, u])
+        outputs = Dense(self.belief_state_dim)(bu)
 
-        return Model([z, control], outputs, name='transition_model')
+        return Model([prev_belief_state, control], outputs, name='transition_model')
 
     def _build_decoder_model(self):
         z = Input(shape=(self.latent_dim,), name='z_input')
 
-        dec0 = Dense(20, activation='tanh')(z)
-        dec1 = Dense(40, activation='tanh')(dec0)
-        dec2 = Dense(60, activation='tanh')(dec1)
-        dec3 = Dense(80, activation='tanh')(dec2)
-        dec4 = Dense(self.num_rays, activation='relu')(dec3)
-        if self.task_relevant:
-            outputs = Lambda(self._get_task_relevant_feature)(dec4)
-        else:
-            outputs = Dense(self.output_dim, activation='relu')(dec4)
+        dec0 = Dense(20, activation='relu')(z)
+        dec1 = Dense(40, activation='relu')(dec0)
+        dec2 = Dense(60, activation='relu')(dec1)
+        dec3 = Dense(80, activation='relu')(dec2)
+        outputs = Dense(self.num_rays, activation='relu')(dec3)
 
         return Model(z, outputs, name='decoder_model')
 
@@ -144,47 +148,45 @@ class TRFModel:
         input_controls = Input(shape=(self.H + self.F, ), name='input_controls')
 
         self.encoder = self._build_encoder_model()
+        self.latent_model = self._build_latent_model()
         self.decoder = self._build_decoder_model()
         self.transition_model = self._build_transition_model()
 
-        if self.training_phase == 0:
-            for layer in self.transition_model.layers:
-                layer.trainable = False
-
         if self.training_phase > 0:
             for layer in self.encoder.layers:
-                layer.trainable = False
-            for layer in self.decoder.layers:
                 layer.trainable = False
 
         outputs = []
 
         ray_init = Lambda(lambda x: x[:, 0, :])(input_rays)
-        zp_mean, zp_std, zp = self.encoder(ray_init)
+        belief = self.encoder(ray_init)
 
         for i in range(1, self.H + self.F, 1):
             ray = Lambda(lambda x: x[:, i, :])(input_rays)
-            z_mean, z_log_var, z = self.encoder(ray)
+            ray_prev = Lambda(lambda x: x[:, i - 1, :])(input_rays)
+            u_prev = Lambda(lambda x: K.expand_dims(x[:, i - 1], axis=-1))(input_controls)
+
+            if self.training_phase == 0:
+                belief = self.encoder(ray)
+            elif self.training_phase == 1:
+                prev_belief = self.encoder(ray_prev)
+                belief = self.transition_model([prev_belief, u_prev])
+                true_belief = self.encoder(ray)
+                self.trans_loss = self.trans_loss + K.square(true_belief - belief)
+            else:
+                belief = self.transition_model([belief, u_prev])
+            # true_belief = self.encoder(ray)
+
+            # self.trans_loss = self.trans_loss + K.square(true_belief - belief)
+
+            z_mean, z_log_var, z = self.latent_model(belief)
 
             self.kl_loss = self.kl_loss + self._compute_kl_loss(z_mean, z_log_var)
 
-            if self.training_phase == 1:
-                ray_prev = Lambda(lambda x: x[:, i - 1, :])(input_rays)
-                u_prev = Lambda(lambda x: K.expand_dims(x[:, i - 1], axis=-1))(input_controls)
-                z_mean_prev, z_log_var_prev, z_prev = self.encoder(ray_prev)
-                zp = self.transition_model([z_prev, u_prev])
-                # zp = Lambda(self._sampling)([zp_mean, zp_std])
-                y = self.decoder(zp)
-
-                self.trans_loss = self.trans_loss + K.square(z - zp)
-
-            if self.training_phase == 0:
-                y = self.decoder(z)
-
+            y = self.decoder(z)
             outputs.append(y)
 
-        if self.training_phase == 1:
-            self.trans_loss = K.mean(self.trans_loss, axis=-1)
+        self.trans_loss = K.mean(self.trans_loss, axis=-1)
 
         outputs_flat = outputs[0]
         for i in range(1, self.F + self.H - 1, 1):
@@ -218,26 +220,67 @@ class TRFModel:
                 self.vae.save_weights("vae_weights_p0.h5")
             print("Saved weights phase", self.training_phase)
 
-        self.training_phase = 1
-        print("Training phase:", self.training_phase)
-        self.vae = self._build_vae_model()
-        if self.task_relevant:
-            self.vae.load_weights("vae_weights_tr_p0.h5", by_name=True)
-        else:
-            self.vae.load_weights("vae_weights_p0.h5", by_name=True)
-        self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
-        self.vae.summary()
-        self.vae.fit([x_train, u_train],
-                     y_train,
-                     epochs=self.epochs,
-                     batch_size=self.batch_size,
-                     validation_data=([x_val, u_val], y_val))
-        # serialize weights to HDF5
-        if self.task_relevant:
-            self.vae.save_weights("vae_weights_tr_p1.h5")
-        else:
-            self.vae.save_weights("vae_weights_p1.h5")
-        print("Saved weights phase", self.training_phase)
+        if self.training_phase == 1:
+            print("Training phase:", self.training_phase)
+            self.vae = self._build_vae_model()
+            if self.task_relevant:
+                self.vae.load_weights("vae_weights_tr_p0.h5", by_name=True)
+            else:
+                self.vae.load_weights("vae_weights_p0.h5", by_name=True)
+            self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
+
+            self.vae.summary()
+            self.vae.fit([x_train, u_train],
+                         y_train,
+                         epochs=self.epochs,
+                         batch_size=self.batch_size,
+                         validation_data=([x_val, u_val], y_val))
+            # serialize weights to HDF5
+            if self.task_relevant:
+                self.vae.save_weights("vae_weights_tr_p1.h5")
+            else:
+                self.vae.save_weights("vae_weights_p1.h5")
+            print("Saved weights phase", self.training_phase)
+
+            """
+            self.transition_model.compile(optimizer='adam', loss='mean_squared_error')
+
+            for i in range(1, self.H + self.F, 1):
+                ray = x_train[:, i, :]
+                ray_prev = x_train[:, i - 1, :]
+                u_prev = u_train[:, i - 1]
+
+                prev_belief = self.encoder.predict(ray_prev)
+                true_belief = self.encoder.predict(ray)
+
+                print(prev_belief.shape, u_prev.shape)
+
+                self.transition_model.fit([prev_belief, u_prev],
+                                          true_belief,
+                                          batch_size=1000,
+                                          epochs=10)
+            """
+
+        if self.training_phase == 2:
+            print("Training phase:", self.training_phase)
+            self.vae = self._build_vae_model()
+            if self.task_relevant:
+                self.vae.load_weights("vae_weights_tr_p1.h5", by_name=True)
+            else:
+                self.vae.load_weights("vae_weights_p1.h5", by_name=True)
+            self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
+            self.vae.summary()
+            self.vae.fit([x_train, u_train],
+                         y_train,
+                         epochs=self.epochs,
+                         batch_size=self.batch_size,
+                         validation_data=([x_val, u_val], y_val))
+            # serialize weights to HDF5
+            if self.task_relevant:
+                self.vae.save_weights("vae_weights_tr_p2.h5")
+            else:
+                self.vae.save_weights("vae_weights_p2.h5")
+            print("Saved weights phase", self.training_phase)
 
     def get_encoder_model(self):
         return self.encoder
@@ -247,6 +290,9 @@ class TRFModel:
 
     def get_transition_model(self):
         return self.transition_model
+
+    def get_latent_model(self):
+        return self.latent_model
 
     def get_vae_model(self):
         return self.vae

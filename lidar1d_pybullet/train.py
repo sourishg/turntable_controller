@@ -10,7 +10,7 @@ H = FLAGS.seq_length
 F = FLAGS.pred_length
 num_rays = FLAGS.num_rays
 num_samples = params.VARIATIONAL_SAMPLES
-epochs = 30
+epochs = 50
 batch_size = 1000
 
 if __name__ == '__main__':
@@ -42,9 +42,9 @@ if __name__ == '__main__':
     if params.TRAINED:
         # load weights into new model
         if FLAGS.task_relevant:
-            model.load_weights("vae_weights_p1.h5")
+            model.load_weights("vae_weights_p0.h5")
         else:
-            model.load_weights("vae_weights_p1.h5")
+            model.load_weights("vae_weights_p0.h5")
     else:
         model.train_model(x_train, x_val,
                           y_train, y_val,

@@ -22,12 +22,13 @@ if __name__ == '__main__':
                      task_relevant=FLAGS.task_relevant)
 
     if FLAGS.task_relevant:
-        model.load_weights("vae_weights_tr_p0.h5")
+        model.load_weights("vae_weights_tr_p1.h5")
     else:
-        model.load_weights("vae_weights_p0.h5")
+        model.load_weights("vae_weights_p1.h5")
 
     encoder = model.get_encoder_model()
     decoder = model.get_decoder_model()
+    latent_model = model.get_latent_model()
     transition_model = model.get_transition_model()
 
     for k in range(0, y_test.shape[0], 1):
@@ -48,14 +49,17 @@ if __name__ == '__main__':
         y_true = np.reshape(y_test[k], (F, output_dim))
 
         for i in range(num_samples):
-            z_mu, z_std, z = encoder.predict(np.array([x_test[k][H-1], ]), batch_size=1)
+            b = encoder.predict(np.array([x_test[k][H-1], ]), batch_size=1)[0]
+            z_prior = np.random.standard_normal(model.latent_dim)
+            z_mu, z_std, z = latent_model.predict([np.array([b, ]), np.array([z_prior, ])], batch_size=1)
             z_mu = z_mu[0]
             z = z[0]
             y_pred = []
             for j in range(F):
                 u = u_test[k][H-1+j]
-                z_mu = transition_model.predict([np.array([z_mu, ]), np.array([u, ])], batch_size=1)[0]
-                z = z_mu + np.random.standard_normal(model.latent_dim) * z_std[0]
+                b = transition_model.predict([np.array([b, ]), np.array([u, ])], batch_size=1)[0]
+                _, _, z = latent_model.predict([np.array([b, ]), np.array([z, ])], batch_size=1)
+                z = z[0]
                 y = decoder.predict(np.array([z, ]), batch_size=1)[0]
                 y_pred.append(y)
 
