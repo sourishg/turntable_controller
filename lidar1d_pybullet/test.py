@@ -50,15 +50,11 @@ if __name__ == '__main__':
 
         for i in range(num_samples):
             b = encoder.predict(np.array([x_test[k][H-1], ]), batch_size=1)[0]
-            z_prior = np.random.standard_normal(model.latent_dim)
-            z_mu, z_std, z = latent_model.predict([np.array([b, ]), np.array([z_prior, ])], batch_size=1)
-            z_mu = z_mu[0]
-            z = z[0]
             y_pred = []
             for j in range(F):
                 u = u_test[k][H-1+j]
                 b = transition_model.predict([np.array([b, ]), np.array([u, ])], batch_size=1)[0]
-                _, _, z = latent_model.predict([np.array([b, ]), np.array([z, ])], batch_size=1)
+                _, _, z = latent_model.predict(np.array([b, ]), batch_size=1)
                 z = z[0]
                 y = decoder.predict(np.array([z, ]), batch_size=1)[0]
                 y_pred.append(y)

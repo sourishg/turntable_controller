@@ -69,7 +69,7 @@ class TRFModel:
         if self.training_phase == 0:
             return mse_loss + self.kl_loss
         else:
-            return K.mean(mse_loss + self.trans_loss)
+            return K.mean(mse_loss + self.kl_loss)
 
     def _sampling_prior(self, args):
         rays = args
@@ -112,7 +112,7 @@ class TRFModel:
     def _build_latent_model(self):
         input_belief_state = Input(shape=(self.belief_state_dim, ), name='input_belief_state')
 
-        b1 = Dense(20)(input_belief_state)
+        b1 = Dense(100)(input_belief_state)
 
         z_mean = Dense(self.latent_dim)(b1)
         z_std = Dense(self.latent_dim)(b1)
@@ -139,7 +139,7 @@ class TRFModel:
         dec1 = Dense(40, activation='relu')(dec0)
         dec2 = Dense(60, activation='relu')(dec1)
         dec3 = Dense(80, activation='relu')(dec2)
-        outputs = Dense(self.num_rays, activation='relu')(dec3)
+        outputs = Dense(self.output_dim, activation='relu')(dec3)
 
         return Model(z, outputs, name='decoder_model')
 
@@ -152,9 +152,11 @@ class TRFModel:
         self.decoder = self._build_decoder_model()
         self.transition_model = self._build_transition_model()
 
+        """
         if self.training_phase > 0:
             for layer in self.encoder.layers:
                 layer.trainable = False
+        """
 
         outputs = []
 
@@ -170,11 +172,16 @@ class TRFModel:
                 belief = self.encoder(ray)
             elif self.training_phase == 1:
                 prev_belief = self.encoder(ray_prev)
-                belief = self.transition_model([prev_belief, u_prev])
+                if i < self.H:
+                    belief = self.transition_model([prev_belief, u_prev])
+                else:
+                    belief = self.transition_model([belief, u_prev])
                 true_belief = self.encoder(ray)
                 self.trans_loss = self.trans_loss + K.square(true_belief - belief)
             else:
                 belief = self.transition_model([belief, u_prev])
+                true_belief = self.encoder(ray)
+                self.trans_loss = self.trans_loss + K.square(true_belief - belief)
             # true_belief = self.encoder(ray)
 
             # self.trans_loss = self.trans_loss + K.square(true_belief - belief)
@@ -186,7 +193,8 @@ class TRFModel:
             y = self.decoder(z)
             outputs.append(y)
 
-        self.trans_loss = K.mean(self.trans_loss, axis=-1)
+        if self.training_phase > 0:
+            self.trans_loss = K.mean(self.trans_loss, axis=-1)
 
         outputs_flat = outputs[0]
         for i in range(1, self.F + self.H - 1, 1):
@@ -195,7 +203,7 @@ class TRFModel:
         return Model([input_rays, input_controls], outputs_flat, name='vae_model')
 
     def load_weights(self, filename):
-        self.training_phase = 0
+        self.training_phase = 1
         self.vae = self._build_vae_model()
         self.vae.load_weights(filename)
         self.vae.compile(optimizer='adam', loss=self._vae_loss_function)

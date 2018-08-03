@@ -17,8 +17,8 @@ max_angular_velocity = params.MAX_ANGULAR_VELOCITY  # control input sampled from
 init_theta = 0.0  # initial state
 dt = params.TIME_INCREMENT  # time increment
 T = params.TOTAL_CONTROL_TIMESTEPS  # total time for one control input
-# M = np.linspace(-max_angular_velocity, max_angular_velocity, num=10)
-M = np.array([-1.0, 0.0, 1.0])
+M = np.linspace(-max_angular_velocity, max_angular_velocity, num=5)
+# M = np.array([-1.0, 0.0, 1.0])
 
 # LIDAR params
 lidar_pos = params.LIDAR_POS
