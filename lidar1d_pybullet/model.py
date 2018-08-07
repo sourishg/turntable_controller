@@ -31,25 +31,22 @@ class TRFModel:
         else:
             self.output_dim = self.num_rays
 
-        self.belief_state_dim = 20
-
-        self.latent_dim = 10
+        self.latent_dim = 15
 
         self.encoder = None
         self.decoder = None
-        self.latent_model = None
         self.transition_model = None
         self.vae = None
 
         self.kl_loss = 0
         self.trans_loss = 0
 
-        self.training_phase = 1
+        self.training_phase = 0
 
-    def _get_task_relevant_feature(self, y):
+    def _get_task_relevant_cost(self, x):
         lo = int(FLAGS.num_rays) / 2 - int(FLAGS.tr_half_width)
         hi = int(FLAGS.num_rays) / 2 + int(FLAGS.tr_half_width)
-        return K.max(y[:, lo:hi], axis=-1, keepdims=True)
+        return K.max(x[:, lo:hi], axis=-1, keepdims=True)
 
     def _compute_kl_loss(self, z_mean, z_log_var):
         loss = 1 + z_log_var - K.square(z_mean) - K.exp(z_log_var)
@@ -59,7 +56,7 @@ class TRFModel:
     def _vae_loss_function(self, y_true, y_pred):
         self.kl_loss = self.kl_loss * FLAGS.latent_multiplier
 
-        # self.trans_loss = self.trans_loss * 0.01
+        self.trans_loss = self.trans_loss * 0.01
 
         # mse_loss = mse(y_true, y_pred)
         delta_y = y_pred - y_true
@@ -92,45 +89,29 @@ class TRFModel:
         epsilon = K.random_normal(shape=(batch, dim))
         return z_mean + K.exp(0.5 * z_log_var) * epsilon
 
-    def _get_prev_controls(self, controls):
-        prev_controls = K.tile(controls[:, :self.H], [1, self.latent_dim])
-        return prev_controls
-
-    def _unpack_output(self, y):
-        return np.reshape(y, (self.H + self.F - 1, self.output_dim))
-
     def _build_encoder_model(self):
         input_ray = Input(shape=(self.num_rays,), name='input_ray')
 
         enc1 = Dense(80, input_shape=(None, self.num_rays))(input_ray)
         enc2 = Dense(60)(enc1)
         enc3 = Dense(40)(enc2)
-        outputs = Dense(self.belief_state_dim)(enc3)
+        enc4 = Dense(20)(enc3)
 
-        return Model(input_ray, outputs, name='encoder_model')
-
-    def _build_latent_model(self):
-        input_belief_state = Input(shape=(self.belief_state_dim, ), name='input_belief_state')
-
-        b1 = Dense(100)(input_belief_state)
-
-        z_mean = Dense(self.latent_dim)(b1)
-        z_std = Dense(self.latent_dim)(b1)
-
-        z_log_var = Lambda(lambda x: x + FLAGS.latent_std_min)(z_std)
+        z_mean = Dense(self.latent_dim)(enc4)
+        z_log_var = Dense(self.latent_dim)(enc4)
         z = Lambda(self._sampling)([z_mean, z_log_var])
 
-        return Model(input_belief_state, [z_mean, z_log_var, z], name='latent_model')
+        return Model(input_ray, [z_mean, z_log_var, z], name='encoder_model')
 
     def _build_transition_model(self):
-        prev_belief_state = Input(shape=(self.belief_state_dim, ), name='prev_belief_state')
+        prev_latent_state = Input(shape=(self.latent_dim, ), name='prev_latent_state')
         control = Input(shape=(1, ), name='input_control')
-        u = Lambda(lambda x: K.tile(x, [1, self.latent_dim]))(control)
 
-        bu = Concatenate()([prev_belief_state, u])
-        outputs = Dense(self.belief_state_dim)(bu)
+        b = Dense(self.latent_dim)(prev_latent_state)
+        u = Dense(self.latent_dim)(control)
+        outputs = Add()([b, u])
 
-        return Model([prev_belief_state, control], outputs, name='transition_model')
+        return Model([prev_latent_state, control], outputs, name='transition_model')
 
     def _build_decoder_model(self):
         z = Input(shape=(self.latent_dim,), name='z_input')
@@ -148,7 +129,6 @@ class TRFModel:
         input_controls = Input(shape=(self.H + self.F, ), name='input_controls')
 
         self.encoder = self._build_encoder_model()
-        self.latent_model = self._build_latent_model()
         self.decoder = self._build_decoder_model()
         self.transition_model = self._build_transition_model()
 
@@ -161,7 +141,7 @@ class TRFModel:
         outputs = []
 
         ray_init = Lambda(lambda x: x[:, 0, :])(input_rays)
-        belief = self.encoder(ray_init)
+        _, _, z_init = self.encoder(ray_init)
 
         for i in range(1, self.H + self.F, 1):
             ray = Lambda(lambda x: x[:, i, :])(input_rays)
@@ -169,31 +149,34 @@ class TRFModel:
             u_prev = Lambda(lambda x: K.expand_dims(x[:, i - 1], axis=-1))(input_controls)
 
             if self.training_phase == 0:
-                belief = self.encoder(ray)
-            elif self.training_phase == 1:
-                prev_belief = self.encoder(ray_prev)
+                z_mean, z_log_var, z = self.encoder(ray)
+                self.kl_loss = self.kl_loss + self._compute_kl_loss(z_mean, z_log_var)
+                y = self.decoder(z)
+                outputs.append(y)
+
+            if self.training_phase == 1:
+                z_mean, z_log_var, prev_z = self.encoder(ray_prev)
+                _, _, true_z = self.encoder(ray)
                 if i < self.H:
-                    belief = self.transition_model([prev_belief, u_prev])
+                    z = self.transition_model([prev_z, u_prev])
+                    self.trans_loss = self.trans_loss + K.square(true_z - z)
                 else:
-                    belief = self.transition_model([belief, u_prev])
-                true_belief = self.encoder(ray)
-                self.trans_loss = self.trans_loss + K.square(true_belief - belief)
-            else:
-                belief = self.transition_model([belief, u_prev])
-                true_belief = self.encoder(ray)
-                self.trans_loss = self.trans_loss + K.square(true_belief - belief)
-            # true_belief = self.encoder(ray)
+                    z = self.transition_model([z, u_prev])
+                self.kl_loss = self.kl_loss + self._compute_kl_loss(z_mean, z_log_var)
+                y = self.decoder(z)
+                outputs.append(y)
 
-            # self.trans_loss = self.trans_loss + K.square(true_belief - belief)
+            if self.training_phase == 2:
+                if i == 1:
+                    prev_z = z_init
+                z = self.transition_model([prev_z, u_prev])
+                prev_z = z
+                z_mean, z_log_var, _ = self.encoder(ray)
+                self.kl_loss = self.kl_loss + self._compute_kl_loss(z_mean, z_log_var)
+                y = self.decoder(z)
+                outputs.append(y)
 
-            z_mean, z_log_var, z = self.latent_model(belief)
-
-            self.kl_loss = self.kl_loss + self._compute_kl_loss(z_mean, z_log_var)
-
-            y = self.decoder(z)
-            outputs.append(y)
-
-        if self.training_phase > 0:
+        if self.training_phase == 1:
             self.trans_loss = K.mean(self.trans_loss, axis=-1)
 
         outputs_flat = outputs[0]
@@ -298,9 +281,6 @@ class TRFModel:
 
     def get_transition_model(self):
         return self.transition_model
-
-    def get_latent_model(self):
-        return self.latent_model
 
     def get_vae_model(self):
         return self.vae
