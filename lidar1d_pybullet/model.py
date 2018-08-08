@@ -32,7 +32,7 @@ class TRFModel:
         else:
             self.output_dim = self.num_rays
 
-        self.latent_dim = 10
+        self.latent_dim = 20
 
         self.encoder = None
         self.transition_model = None
@@ -59,10 +59,11 @@ class TRFModel:
 
         self.trans_loss = self.trans_loss * 1e-03
 
-        mse_loss = mse(y_true, y_pred)
-        # delta_y = y_pred - y_true
-        # error_y = K.switch(K.greater_equal(delta_y, 0), lambda: 0.8 * delta_y, lambda: -delta_y)
-        # mse_loss = K.mean(K.square(error_y), axis=-1)
+        # mse_loss = mse(y_true, y_pred)
+        delta_y = y_pred - y_true
+        error_y = K.switch(K.greater_equal(delta_y, 0), lambda: 0.6 * delta_y, lambda: -delta_y)
+        mse_loss = K.mean(K.square(error_y), axis=-1)
+
         if self.training_phase == 0:
             return mse_loss + self.kl_loss
         elif self.training_phase == 1:
@@ -95,9 +96,9 @@ class TRFModel:
         input_ray = Input(shape=(self.num_rays, ), name='input_ray')
 
         enc1 = Dense(80, activation='relu')(input_ray)
-        enc2 = Dense(60, activation='relu')(enc1)
+        enc2 = Dense(80, activation='relu')(enc1)
         enc3 = Dense(40, activation='relu')(enc2)
-        enc4 = Dense(20, activation='relu')(enc3)
+        enc4 = Dense(40, activation='relu')(enc3)
 
         z_mean = Dense(self.latent_dim, activation='relu')(enc4)
         z_std = Dense(self.latent_dim, activation='relu')(enc4)
