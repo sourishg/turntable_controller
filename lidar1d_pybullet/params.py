@@ -4,7 +4,7 @@ from tensorflow.python.platform import flags
 
 FLAGS = flags.FLAGS
 
-flags.DEFINE_integer('seq_length', 5,
+flags.DEFINE_integer('seq_length', 10,
                      'Length of input sequence')
 flags.DEFINE_integer('pred_length', 10,
                      'Length of prediction')
@@ -12,7 +12,7 @@ flags.DEFINE_integer('num_rays', 100,
                      'Length of prediction')
 flags.DEFINE_float('train_val_split', 0.8,
                    'Training/validation split ratio')
-flags.DEFINE_float('latent_multiplier', 1e-05,
+flags.DEFINE_float('latent_multiplier', 5e-06,
                    'Multiplier for KL cost')
 flags.DEFINE_float('latent_std_min', -5.0,
                    'Min log var of latent variables')

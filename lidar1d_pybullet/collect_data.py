@@ -17,7 +17,7 @@ max_angular_velocity = params.MAX_ANGULAR_VELOCITY  # control input sampled from
 init_theta = 0.0  # initial state
 dt = params.TIME_INCREMENT  # time increment
 T = params.TOTAL_CONTROL_TIMESTEPS  # total time for one control input
-M = np.linspace(-max_angular_velocity, max_angular_velocity, num=5)
+M = np.linspace(-max_angular_velocity, max_angular_velocity, num=10)
 # M = np.array([-1.0, 0.0, 1.0])
 
 # LIDAR params
@@ -146,7 +146,7 @@ if __name__ == '__main__':
         #u = np.random.uniform(-max_angular_velocity, max_angular_velocity, control_samples)
         control_idx = np.random.randint(M.shape[0], size=control_samples)
         for idx in control_idx:
-            # data stored as: theta_dot, theta, range values...
+            # data stored as: theta, theta_dot, range values...
             # for each world there are "control_samples" number of rows
             # so total rows = world_samples * control_samples * T
             # print("Recording datapoint %i\n" % i)
@@ -158,4 +158,5 @@ if __name__ == '__main__':
                 f.write("\n")
                 init_theta = normAngle(init_theta + M[idx] * dt)
         # change the world
+        f.write("1000\n")
         repositionObstacles(UIDs)

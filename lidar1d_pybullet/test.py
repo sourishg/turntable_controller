@@ -22,23 +22,24 @@ if __name__ == '__main__':
                      task_relevant=FLAGS.task_relevant)
 
     if FLAGS.task_relevant:
-        model.load_weights("vae_weights_tr_p1.h5")
+        model.load_weights("vae_weights_tr_p2.h5")
     else:
-        model.load_weights("vae_weights_p1.h5")
+        model.load_weights("vae_weights_p2.h5")
 
     encoder = model.get_encoder_model()
-    decoder = model.get_decoder_model()
     transition_model = model.get_transition_model()
+    cost_model = model.get_cost_model()
 
     for k in range(0, y_test.shape[0], 1):
-        fig = plt.figure(figsize=(15, 8))
         plots = []
 
         output_dim = num_rays
         if FLAGS.task_relevant:
+            fig = plt.figure(figsize=(9, 5))
             output_dim = 1
             plt.ylim([0.0, 1.0])
         else:
+            fig = plt.figure(figsize=(15, 8))
             for p in range(F):
                 ax = fig.add_subplot(3, F / 3 + 1, p + 1)
                 ax.set_ylim([0.0, 1.0])
@@ -54,7 +55,7 @@ if __name__ == '__main__':
             for j in range(F):
                 u = u_test[k][H-1+j]
                 z = transition_model.predict([np.array([z, ]), np.array([u, ])], batch_size=1)[0]
-                y = decoder.predict(np.array([z, ]), batch_size=1)[0]
+                y = cost_model.predict([np.array([z, ]), np.array([u, ])], batch_size=1)[0]
                 y_pred.append(y)
 
             if FLAGS.task_relevant:
