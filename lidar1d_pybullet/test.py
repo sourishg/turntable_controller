@@ -35,9 +35,12 @@ if __name__ == '__main__':
 
         output_dim = num_rays
         if FLAGS.task_relevant:
-            fig = plt.figure(figsize=(9, 5))
+            fig = plt.figure(figsize=(9, 6))
             output_dim = 1
             plt.ylim([0.0, 1.0])
+            plt.title("Cost prediction")
+            plt.xlabel("Timesteps")
+            plt.ylabel("Cost")
         else:
             fig = plt.figure(figsize=(15, 8))
             for p in range(F):
@@ -65,7 +68,7 @@ if __name__ == '__main__':
                     plots[p].plot([j for j in range(num_rays)], [float(u) for u in y_pred[p]], 'b.')
 
         if FLAGS.task_relevant:
-            plt.plot([j for j in range(F)], [float(u) for u in y_test[k]], 'r.')
+            plt.plot([j for j in range(F)], [float(u) for u in y_test[k]], 'r.', markersize=10)
         else:
             for p in range(F):
                 plots[p].plot([j for j in range(FLAGS.num_rays)], [float(u) for u in y_true[p]], 'r.')
