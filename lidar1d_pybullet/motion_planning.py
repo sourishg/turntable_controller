@@ -46,6 +46,25 @@ mass = 0
 prev_ranges = []
 prev_controls = []
 
+model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
+                     FLAGS.pred_length, var_samples=num_samples,
+                     task_relevant=FLAGS.task_relevant)
+
+if FLAGS.task_relevant:
+    model.load_weights("vae_weights_tr_p2.h5")
+else:
+    model.load_weights("vae_weights_p2.h5")
+
+encoder = model.get_encoder_model()
+transition_model = model.get_transition_model()
+cost_model = model.get_cost_model()
+
+A = transition_model.layers[2].get_weights()[0]
+B = transition_model.layers[3].get_weights()[0]
+
+P = cost_model.layers[2].get_weights()[0]
+Q = cost_model.layers[3].get_weights()[0]
+
 p.connect(p.GUI)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
@@ -63,7 +82,7 @@ def create_world():
     p.createCollisionShape(p.GEOM_PLANE)
     p.createMultiBody(0, 0)
 
-    obstCylinderId = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.3)
+    obstCylinderId = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.2)
     obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2.2, -2, 0], baseOrientation=[0, 0, 0, 1])
     obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2.3, -1.5, 0], baseOrientation=[0, 0, 0, 1])
     obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2.4, -1.0, 0], baseOrientation=[0, 0, 0, 1])
@@ -138,7 +157,6 @@ def next_state(state, u):
 def init_history():
     global cur_state
     u = 0
-    #u = M[random.randint(0, M.shape[0]-1)]
     print("Initial control:", u)
     for i in range(H):
         ranges = get_range_reading(cur_state)
@@ -146,32 +164,23 @@ def init_history():
         prev_ranges.append(ranges)
         prev_controls.append(u)
 
-
-def get_risk_metric(y):
-    return y[F-1]
-
-
-def get_desampled_y(sampled_y):
-    y = np.array(sampled_y).astype('float32')
-    return np.mean(y, axis=0)
-
-
-def next_control(models):
+def next_control():
     global prev_ranges, prev_controls
-    x = np.array(prev_ranges[-H:]).astype('float32')
-    distances = []
+    x = prev_ranges[-1]
+    _, _, z = encoder.predict(np.array([x, ]), batch_size=1)
+    z = z[0]
     y_pred = []
     for i in range(M.shape[0]):
-        u = np.array(prev_controls[-H:])
-        u = np.append(u, np.full(F, M[i])).astype('float32')
-        sampled_y = predict(x, u, models)
-        y = get_desampled_y(sampled_y)
-        d = get_risk_metric(y)
-
-        print("u = %f, d = %f" % (M[i], d))
-        distances.append(d)
-        y_pred.append(sampled_y)
-    idx = np.argmin(np.array(distances))
+        sum_y = 0.0
+        for sample in range(num_samples):
+            for j in range(F):
+                z = transition_model.predict([np.array([z, ]), np.array([M[i], ])], batch_size=1)[0]
+                y = cost_model.predict([np.array([z, ]), np.array([M[i], ])], batch_size=1)[0]
+            sum_y = sum_y + y
+        y = sum_y / float(num_samples)
+        y_pred.append(y)
+        print("u = %f, d = %f" % (M[i], y))
+    idx = np.argmin(np.array(y_pred))
     print("Next control:", M[idx])
     return y_pred[idx], M[idx]
 
@@ -214,31 +223,19 @@ def predict(x, control, models):
 
 
 if __name__ == '__main__':
-
-    model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
-                     FLAGS.pred_length, var_samples=num_samples,
-                     task_relevant=False)
-
-    model_tr = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
-                        FLAGS.pred_length, var_samples=num_samples,
-                        task_relevant=True)
-
-    model_tr.load_weights("vae_weights_tr_p2.h5")
-    model.load_weights("vae_weights_p2.h5")
-
     p.setGravity(0, 0, -9.8)
     p.setRealTimeSimulation(1)
 
-    create_random_world()
-    # create_world()
+    # create_random_world()
+    create_world()
     init_history()
     d = 1.0
     min_thresh = 4.5
-    while d > 1.0 - 5.5/5.0:
-        y_pred, u = next_control((model, model_tr))
+    while d > 1.0 - 4.5/5.0:
+        y_pred, u = next_control()
         d, prev_gt_ranges = simulate_controller(u)
-        print("Current d/ Predicted d:", d, y_pred[F-1])
-
+        print("Current d/ Predicted d:", d, y_pred)
+        """
         print("Plotting graphs...")
         y_true = []
         for y in prev_gt_ranges:
@@ -249,5 +246,5 @@ if __name__ == '__main__':
             plt.plot([j for j in range(F)], [float(u) for u in y_pred[z]], 'b.')
         plt.plot([j for j in range(F)], [float(u) for u in y_true], 'r.')
         plt.show()
-
+        """
     time.sleep(2)
