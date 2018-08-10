@@ -112,8 +112,8 @@ class TRFModel:
         prev_latent_state = Input(shape=(self.latent_dim, ), name='prev_latent_state')
         control = Input(shape=(1, ), name='input_control')
 
-        z = Dense(self.latent_dim)(prev_latent_state)
-        u = Dense(self.latent_dim)(control)
+        z = Dense(self.latent_dim, use_bias=False)(prev_latent_state)
+        u = Dense(self.latent_dim, use_bias=False)(control)
         outputs = Add()([z, u])
 
         return Model([prev_latent_state, control], outputs, name='transition_model')
@@ -122,8 +122,8 @@ class TRFModel:
         latent_state = Input(shape=(self.latent_dim,), name='latent_state')
         control = Input(shape=(1,), name='control')
 
-        p = Dense(self.latent_dim, kernel_constraint=non_neg())(latent_state)
-        q = Dense(1, kernel_constraint=non_neg())(control)
+        p = Dense(self.latent_dim, kernel_constraint=non_neg(), use_bias=False)(latent_state)
+        q = Dense(1, kernel_constraint=non_neg(), use_bias=False)(control)
         r = Dot(axes=1)([latent_state, p])
         s = Dot(axes=1)([control, q])
         cost = Add()([r, s])
@@ -137,6 +137,7 @@ class TRFModel:
         self.encoder = self._build_encoder_model()
         self.transition_model = self._build_transition_model()
         self.cost_model = self._build_cost_model()
+        # self.cost_model.layers[-1].trainable_weights.extend([W, b])
 
         outputs = []
 
@@ -152,7 +153,7 @@ class TRFModel:
             if self.training_phase == 0:
                 z_mean, z_log_var, z = self.encoder(ray)
                 self.kl_loss = self.kl_loss + self._compute_kl_loss(z_mean, z_log_var)
-                y = self.cost_model([z, u])
+                y = self.cost_model([z, u_prev])
 
             if self.training_phase == 1:
                 _, _, prev_z = self.encoder(ray_prev)
@@ -161,7 +162,7 @@ class TRFModel:
 
                 z = self.transition_model([prev_z, u_prev])
                 self.trans_loss = self.trans_loss + K.square(true_z - z)
-                y = self.cost_model([z, u])
+                y = self.cost_model([z, u_prev])
 
             if self.training_phase == 2:
                 _, _, prev_z = self.encoder(ray_prev)
@@ -171,11 +172,11 @@ class TRFModel:
                 if i < self.H:
                     z = self.transition_model([prev_z, u_prev])
                     self.trans_loss = self.trans_loss + K.square(true_z - z)
-                    y = self.cost_model([z, u])
+                    y = self.cost_model([z, u_prev])
                 else:
                     z = self.transition_model([z, u_prev])
                     self.trans_loss = self.trans_loss + K.square(true_z - z)
-                    y = self.cost_model([z, u])
+                    y = self.cost_model([z, u_prev])
 
             outputs.append(y)
 
