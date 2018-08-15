@@ -63,6 +63,11 @@ B = transition_model.layers[3].get_weights()[0]
 P = cost_model.layers[2].get_weights()[0]
 Q = cost_model.layers[3].get_weights()[0]
 
+U = P * P.transpose()
+V = Q * Q.transpose()
+
+print(P.shape, U.shape, Q.shape, V.shape)
+
 p.connect(p.GUI)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
@@ -238,12 +243,12 @@ def solve_mpc(prev_x):
     # print(cost2)
     T = FLAGS.pred_length
     z = Variable(model.latent_dim, T + 1)
-    u = Variable(1, T)
+    u = Variable(model.control_dim, T)
     G = np.eye(model.latent_dim)
 
     states = []
     for t in range(T):
-        cost = quad_form(z[:, t+1], G) + quad_form(u[:, t], Q)
+        cost = quad_form(z[:, t+1], U) + quad_form(u[:, t], V)
         # cost = sum_squares(z[:, t + 1]) + sum_squares(u[:, t])
         constr = [z[:, t + 1] == A * z[:, t] + B.transpose() * u[:, t]]
         states.append(Problem(Minimize(cost), constr))

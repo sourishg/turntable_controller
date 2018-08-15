@@ -125,9 +125,17 @@ class TRFModel:
 
         u = Dense(self.latent_dim, use_bias=False)(latent_state)
         v = Dense(self.control_dim, use_bias=False)(control)
-        r = Lambda(lambda x: K.dot(x, K.transpose(x)))(u)
-        s = Lambda(lambda x: K.dot(x, K.transpose(x)))(v)
+        r = Lambda(lambda x: K.batch_dot(x, x, axes=1))(u)
+        s = Lambda(lambda x: K.batch_dot(x, x, axes=1))(v)
         cost = Add()([r, s])
+
+        """
+        p = Dense(self.latent_dim, kernel_constraint=non_neg(), use_bias=False)(latent_state)
+        q = Dense(1, kernel_constraint=non_neg(), use_bias=False)(control)
+        r = Dot(axes=1)([latent_state, p])
+        s = Dot(axes=1)([control, q])
+        cost = Add()([r, s])
+        """
 
         return Model([latent_state, control], cost, name='cost_model')
 
