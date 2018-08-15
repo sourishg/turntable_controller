@@ -32,6 +32,7 @@ class TRFModel:
         else:
             self.output_dim = self.num_rays
 
+        self.control_dim = 1
         self.latent_dim = 20
 
         self.encoder = None
@@ -42,7 +43,7 @@ class TRFModel:
         self.kl_loss = 0
         self.trans_loss = 0
 
-        self.training_phase = 2
+        self.training_phase = 0
 
     def _get_task_relevant_cost(self, x):
         lo = int(FLAGS.num_rays) / 2 - int(FLAGS.tr_half_width)
@@ -110,7 +111,7 @@ class TRFModel:
 
     def _build_transition_model(self):
         prev_latent_state = Input(shape=(self.latent_dim, ), name='prev_latent_state')
-        control = Input(shape=(1, ), name='input_control')
+        control = Input(shape=(self.control_dim, ), name='input_control')
 
         z = Dense(self.latent_dim, use_bias=False)(prev_latent_state)
         u = Dense(self.latent_dim, use_bias=False)(control)
@@ -120,12 +121,12 @@ class TRFModel:
 
     def _build_cost_model(self):
         latent_state = Input(shape=(self.latent_dim,), name='latent_state')
-        control = Input(shape=(1,), name='control')
+        control = Input(shape=(self.control_dim,), name='control')
 
-        p = Dense(self.latent_dim, kernel_constraint=non_neg(), use_bias=False)(latent_state)
-        q = Dense(1, kernel_constraint=non_neg(), use_bias=False)(control)
-        r = Dot(axes=1)([latent_state, p])
-        s = Dot(axes=1)([control, q])
+        u = Dense(self.latent_dim, use_bias=False)(latent_state)
+        v = Dense(self.control_dim, use_bias=False)(control)
+        r = Lambda(lambda x: K.dot(x, K.transpose(x)))(u)
+        s = Lambda(lambda x: K.dot(x, K.transpose(x)))(v)
         cost = Add()([r, s])
 
         return Model([latent_state, control], cost, name='cost_model')

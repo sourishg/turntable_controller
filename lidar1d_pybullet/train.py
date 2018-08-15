@@ -10,7 +10,7 @@ H = FLAGS.seq_length
 F = FLAGS.pred_length
 num_rays = FLAGS.num_rays
 num_samples = params.VARIATIONAL_SAMPLES
-epochs = 70
+epochs = 50
 batch_size = 1000
 
 if __name__ == '__main__':

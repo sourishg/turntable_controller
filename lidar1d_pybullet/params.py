@@ -12,7 +12,7 @@ flags.DEFINE_integer('num_rays', 100,
                      'Length of prediction')
 flags.DEFINE_float('train_val_split', 0.8,
                    'Training/validation split ratio')
-flags.DEFINE_float('latent_multiplier', 5e-06,
+flags.DEFINE_float('latent_multiplier', 5e-07,
                    'Multiplier for KL cost')
 flags.DEFINE_float('latent_std_min', -5.0,
                    'Min log var of latent variables')
@@ -27,7 +27,7 @@ VARIATIONAL_SAMPLES = 30
 # World and control paramters
 
 NUM_OBSTACLES = 10
-WORLD_SAMPLES = 50
+WORLD_SAMPLES = 1
 CONTROL_SAMPLES = 100
 MAX_ANGULAR_VELOCITY = 1.0
 TIME_INCREMENT = 0.1
