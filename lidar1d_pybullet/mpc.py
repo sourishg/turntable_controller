@@ -44,30 +44,6 @@ mass = 0
 prev_ranges = []
 prev_controls = []
 
-model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
-                     FLAGS.pred_length, var_samples=num_samples,
-                     task_relevant=FLAGS.task_relevant)
-
-if FLAGS.task_relevant:
-    model.load_weights("vae_weights_tr_p2.h5")
-else:
-    model.load_weights("vae_weights_p2.h5")
-
-encoder = model.get_encoder_model()
-transition_model = model.get_transition_model()
-cost_model = model.get_cost_model()
-
-A = transition_model.layers[2].get_weights()[0]
-B = transition_model.layers[3].get_weights()[0]
-
-P = cost_model.layers[2].get_weights()[0]
-Q = cost_model.layers[3].get_weights()[0]
-
-U = P * P.transpose()
-V = Q * Q.transpose()
-
-print(P.shape, U.shape, Q.shape, V.shape)
-
 p.connect(p.GUI)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
 
@@ -235,22 +211,27 @@ def predict(x, control, model):
     return sampled_y
 
 def solve_mpc(prev_x):
+    """
+    for i in range(30):
+        _, _, z0 = encoder.predict(np.array([prev_x, ]), batch_size=1)
+        u0 = [0.5]
+        cost = cost_model.predict([np.array([z0[0], ]), np.array([u0, ])], batch_size=1)[0]
+        cost2 = np.matmul(z0, np.matmul(U, z0.transpose())) + np.matmul(np.array([u0, ]), np.matmul(V, np.array([u0, ]).transpose()))
+        print(cost, cost2)
+    """
     _, _, z0 = encoder.predict(np.array([prev_x, ]), batch_size=1)
-    # u0 = [0.5]
-    # cost = cost_model.predict([np.array([z0[0], ]), np.array([u0, ])], batch_size=1)[0]
-    # cost2 = np.matmul(z0, np.matmul(P, z0.transpose()))
-    # print(cost)
-    # print(cost2)
     T = FLAGS.pred_length
     z = Variable(model.latent_dim, T + 1)
     u = Variable(model.control_dim, T)
-    G = np.eye(model.latent_dim)
 
     states = []
     for t in range(T):
-        cost = quad_form(z[:, t+1], U) + quad_form(u[:, t], V)
+        if t == T-1:
+            cost = quad_form(z[:, t+1], U) + quad_form(u[:, t], V)
+        else:
+            cost = 0
         # cost = sum_squares(z[:, t + 1]) + sum_squares(u[:, t])
-        constr = [z[:, t + 1] == A * z[:, t] + B.transpose() * u[:, t]]
+        constr = [z[:, t + 1] == A * z[:, t] + B * u[:, t]]
         states.append(Problem(Minimize(cost), constr))
     # sums problem objectives and concatenates constraints.
     prob = sum(states)
@@ -261,12 +242,36 @@ def solve_mpc(prev_x):
     print(u.value)
 
 
+model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
+                 FLAGS.pred_length, var_samples=num_samples,
+                 task_relevant=FLAGS.task_relevant)
+
+if FLAGS.task_relevant:
+    model.load_weights("vae_weights_tr_p2.h5")
+else:
+    model.load_weights("vae_weights_p2.h5")
+
+encoder = model.get_encoder_model()
+transition_model = model.get_transition_model()
+cost_model = model.get_cost_model()
+
+A = transition_model.layers[2].get_weights()[0].transpose()
+B = transition_model.layers[3].get_weights()[0].transpose()
+
+P = cost_model.layers[2].get_weights()[0]
+Q = cost_model.layers[3].get_weights()[0]
+
+U = np.matmul(P, P.transpose())
+V = np.matmul(Q, Q.transpose())
+
+print(A.shape, B.shape, P.shape, U.shape, Q.shape, V.shape)
+
 if __name__ == '__main__':
     p.setGravity(0, 0, -9.8)
     p.setRealTimeSimulation(1)
 
-    # create_random_world()
-    create_world()
+    create_random_world()
+    # create_world()
     init_history()
 
     solve_mpc(prev_ranges[-1])
