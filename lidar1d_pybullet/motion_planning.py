@@ -30,7 +30,7 @@ max_angular_velocity = params.MAX_ANGULAR_VELOCITY  # control input sampled from
 cur_state = -1.047  # initial state
 dt = params.TIME_INCREMENT  # time increment
 T = params.TOTAL_CONTROL_TIMESTEPS  # total time for one control input
-M = np.linspace(-max_angular_velocity, max_angular_velocity, num=5)
+M = np.linspace(-max_angular_velocity, max_angular_velocity, num=10)
 
 # LIDAR params
 lidar_pos = params.LIDAR_POS
@@ -45,25 +45,6 @@ mass = 0
 # VAE stuff
 prev_ranges = []
 prev_controls = []
-
-model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
-                     FLAGS.pred_length, var_samples=num_samples,
-                     task_relevant=FLAGS.task_relevant)
-
-if FLAGS.task_relevant:
-    model.load_weights("vae_weights_tr_p2.h5")
-else:
-    model.load_weights("vae_weights_p2.h5")
-
-encoder = model.get_encoder_model()
-transition_model = model.get_transition_model()
-cost_model = model.get_cost_model()
-
-A = transition_model.layers[2].get_weights()[0]
-B = transition_model.layers[3].get_weights()[0]
-
-P = cost_model.layers[2].get_weights()[0]
-Q = cost_model.layers[3].get_weights()[0]
 
 p.connect(p.GUI)
 p.setAdditionalSearchPath(pybullet_data.getDataPath())
@@ -164,78 +145,83 @@ def init_history():
         prev_ranges.append(ranges)
         prev_controls.append(u)
 
+
 def next_control():
     global prev_ranges, prev_controls
     x = prev_ranges[-1]
-    _, _, z = encoder.predict(np.array([x, ]), batch_size=1)
-    z = z[0]
-    y_pred = []
+    costs = []
+    predictions = []
     for i in range(M.shape[0]):
-        sum_y = 0.0
-        for sample in range(num_samples):
-            for j in range(F):
-                z = transition_model.predict([np.array([z, ]), np.array([M[i], ])], batch_size=1)[0]
-                y = cost_model.predict([np.array([z, ]), np.array([M[i], ])], batch_size=1)[0]
-            sum_y = sum_y + y
-        y = sum_y / float(num_samples)
-        y_pred.append(y)
-        print("u = %f, d = %f" % (M[i], y))
-    idx = np.argmin(np.array(y_pred))
+        prediction = predict_cost(x, M[i])
+        cost = np.mean(prediction, axis=1)[F-1]
+        costs.append(cost)
+        predictions.append(prediction)
+    idx = np.argmin(np.array(costs))
     print("Next control:", M[idx])
-    return y_pred[idx], M[idx]
+    return predictions[idx], M[idx]
 
 
-def simulate_controller(u):
+def predict_cost(x, control):
+    prediction = []
+    for i in range(num_samples):
+        _, _, z = encoder.predict(np.array([x, ]), batch_size=1)
+        z = z[0]
+        cost = []
+        for j in range(F):
+            z = transition_model.predict([np.array([z, ]), np.array([control, ])], batch_size=1)[0]
+            y = cost_model.predict([np.array([z, ]), np.array([control, ])], batch_size=1)[0]
+            cost.append(y)
+        prediction.append(cost)
+    return prediction
+
+
+def simulate_controller(control):
     global cur_state, prev_ranges, prev_controls
-    d = 0.0
+    tr_cost = 0.0
     for i in range(F):
-        cur_state = next_state(cur_state, u)
+        cur_state = next_state(cur_state, control)
         ranges = get_range_reading(cur_state)
         prev_ranges.append(ranges)
-        prev_controls.append(u)
-        d = get_task_relevant_feature(ranges, FLAGS.tr_half_width)
-        print("Central dist:", d)
-    return d, prev_ranges[-F:]
+        prev_controls.append(control)
+        tr_cost = get_task_relevant_feature(ranges, FLAGS.tr_half_width)
+        print("True TR cost:", tr_cost)
+    return tr_cost, prev_ranges[-F:]
 
 
-def predict(x, control, models):
-    model, model_tr = models
-    gen_model = model.get_gen_model()
-    vae_model_tr = model_tr.get_vae_model()
-    init_outputs = []
-    prev_y = x[-1]
-    for p in range(F):
-        z = np.random.standard_normal(model.latent_dim)
-        u = control[H - 1 + p]
-        y_pred = gen_model.predict([np.array([prev_y, ]), np.array([u, ]), np.array([z, ])], batch_size=1)[0]
-        init_outputs.append(y_pred)
-        prev_y = y_pred
+model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
+                     FLAGS.pred_length, var_samples=num_samples,
+                     task_relevant=FLAGS.task_relevant)
 
-    init_outputs = np.array(init_outputs).astype('float32')
-    prev_x = np.array(x).astype('float32')
-    x_enc = np.concatenate((prev_x, init_outputs))
-    sampled_y = []
-    for i in range(num_samples):
-        y_pred = vae_model_tr.predict([np.array([x_enc, ]), np.array([control, ])], batch_size=1)[0]
-        y = y_pred[H - 1:]
-        sampled_y.append(y)
-    return sampled_y
+if FLAGS.task_relevant:
+    model.load_weights("vae_weights_tr_p2.h5")
+else:
+    model.load_weights("vae_weights_p2.h5")
 
+encoder = model.get_encoder_model()
+transition_model = model.get_transition_model()
+cost_model = model.get_cost_model()
+
+A = transition_model.layers[2].get_weights()[0]
+B = transition_model.layers[3].get_weights()[0]
+
+P = cost_model.layers[2].get_weights()[0]
+Q = cost_model.layers[3].get_weights()[0]
 
 if __name__ == '__main__':
     p.setGravity(0, 0, -9.8)
     p.setRealTimeSimulation(1)
 
-    # create_random_world()
-    create_world()
+    create_random_world()
+    # create_world()
     init_history()
     d = 1.0
     min_thresh = 4.5
-    while d > 1.0 - 4.5/5.0:
+    while d > 1.0 - 5.5/5.0:
+        # y_pred = predict_cost(prev_ranges[-1], 0.5)
         y_pred, u = next_control()
         d, prev_gt_ranges = simulate_controller(u)
-        print("Current d/ Predicted d:", d, y_pred)
-        """
+        # print("Current d/ Predicted d:", d, y_pred)
+
         print("Plotting graphs...")
         y_true = []
         for y in prev_gt_ranges:
@@ -246,5 +232,5 @@ if __name__ == '__main__':
             plt.plot([j for j in range(F)], [float(u) for u in y_pred[z]], 'b.')
         plt.plot([j for j in range(F)], [float(u) for u in y_true], 'r.')
         plt.show()
-        """
+
     time.sleep(2)
