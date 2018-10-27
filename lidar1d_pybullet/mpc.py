@@ -173,17 +173,17 @@ def next_control(models):
     return y_pred[idx], M[idx]
 
 
-def simulate_controller(u):
+def simulate_controller(u, timesteps):
     global cur_state, prev_ranges, prev_controls
     d = 0.0
-    for i in range(F):
+    for i in range(timesteps):
         cur_state = next_state(cur_state, u)
         ranges = get_range_reading(cur_state)
         prev_ranges.append(ranges)
         prev_controls.append(u)
         d = get_task_relevant_feature(ranges, FLAGS.tr_half_width)
         print("Central dist:", d)
-    return d, prev_ranges[-F:]
+    return d, prev_ranges[-timesteps:]
 
 
 def predict(x, control, model):
@@ -210,7 +210,7 @@ def predict(x, control, model):
         sampled_y.append(y)
     return sampled_y
 
-def solve_mpc(prev_x):
+def solve_mpc(prev_x, prev_u):
     """
     for i in range(30):
         _, _, z0 = encoder.predict(np.array([prev_x, ]), batch_size=1)
@@ -219,27 +219,49 @@ def solve_mpc(prev_x):
         cost2 = np.matmul(z0, np.matmul(U, z0.transpose())) + np.matmul(np.array([u0, ]), np.matmul(V, np.array([u0, ]).transpose()))
         print(cost, cost2)
     """
-    _, _, z0 = encoder.predict(np.array([prev_x, ]), batch_size=1)
+    z0_mu, z0_sigma, _ = encoder.predict(np.array([prev_x, ]), batch_size=1)
+
+    """
+    u0 = [0.0]
+    cost1 = cost_model.predict([np.array([z0_mu[0], ]), np.array([u0, ])], batch_size=1)[0]
+    cost2 = 0.0
+    cost3 = np.matmul(z0_mu, np.matmul(U, z0_mu.transpose())) + np.matmul(np.array([u0, ]),
+                                                                    np.matmul(V, np.array([u0, ]).transpose()))
+    for i in range(100):
+        _, _, z0 = encoder.predict(np.array([prev_x, ]), batch_size=1)
+        cost2 = cost2 + cost_model.predict([np.array([z0[0], ]), np.array([u0, ])], batch_size=1)[0]
+    cost2 = cost2 / 100.0
+    print(cost1, cost2, cost3)
+    """
+
     T = FLAGS.pred_length
     z = Variable(model.latent_dim, T + 1)
     u = Variable(model.control_dim, T)
 
     states = []
+    cost = 0.0
+    constr = []
     for t in range(T):
+        """
         if t == T-1:
             cost = quad_form(z[:, t+1], U) + quad_form(u[:, t], V)
         else:
             cost = 0
+        """
+        cost += quad_form(z[:, t+1], U) + quad_form(u[:, t], V)
         # cost = sum_squares(z[:, t + 1]) + sum_squares(u[:, t])
-        constr = [z[:, t + 1] == A * z[:, t] + B * u[:, t]]
-        states.append(Problem(Minimize(cost), constr))
+        constr += [z[:, t + 1] == A * z[:, t] + B * u[:, t]]
+        # states.append(Problem(Minimize(cost), constr))
     # sums problem objectives and concatenates constraints.
-    prob = sum(states)
-    prob.constraints += [z[:, 0] == z0.transpose()]
+    # prob = sum(states)
+    prob = Problem(Minimize(cost), constr)
+    # prob.constraints += [u[:, 0] == [[prev_u]]]
+    prob.constraints += [z[:, 0] == z0_mu.transpose()]
     prob.constraints += [u <= 1.0]
     prob.constraints += [u >= -1.0]
-    prob.solve(verbose=True)
-    print(u.value)
+    prob.solve(verbose=False)
+    # print(u.value)
+    return u.value
 
 
 model = TRFModel(FLAGS.num_rays, FLAGS.seq_length,
@@ -274,12 +296,18 @@ if __name__ == '__main__':
     # create_world()
     init_history()
 
-    solve_mpc(prev_ranges[-1])
+    # solve_mpc(prev_ranges[-1])
 
-    """
     d = 1.0
     min_thresh = 4.5
+    prev_u = 0.0
     while d > 1.0 - 5.5/5.0:
+        u = solve_mpc(prev_ranges[-1], prev_u)
+        print(u[0, 0])
+        d, prev_gt_ranges = simulate_controller(u[0, 0], 1)
+        prev_u = u[0, 0]
+        print("Current d/ Predicted d:", d)
+        """
         y_pred, u = next_control(model)
         d, prev_gt_ranges = simulate_controller(u)
         print("Current d/ Predicted d:", d, y_pred[F-1])
@@ -294,7 +322,8 @@ if __name__ == '__main__':
             plt.plot([j for j in range(F)], [float(u) for u in y_pred[z]], 'b.')
         plt.plot([j for j in range(F)], [float(u) for u in y_true], 'r.')
         plt.show()
-    """
+        """
+
     while True:
         x = 1
     time.sleep(2)
