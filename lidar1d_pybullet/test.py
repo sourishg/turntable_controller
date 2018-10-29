@@ -22,9 +22,9 @@ if __name__ == '__main__':
                      task_relevant=FLAGS.task_relevant)
 
     if FLAGS.task_relevant:
-        model.load_weights("vae_weights_tr_p2.h5")
+        model.load_weights("weights/vae_weights_tr_p2.h5")
     else:
-        model.load_weights("vae_weights_p2.h5")
+        model.load_weights("weights/vae_weights_p2.h5")
 
     encoder = model.get_encoder_model()
     transition_model = model.get_transition_model()

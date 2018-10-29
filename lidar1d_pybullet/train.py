@@ -42,9 +42,9 @@ if __name__ == '__main__':
     if params.TRAINED:
         # load weights into new model
         if FLAGS.task_relevant:
-            model.load_weights("vae_weights_tr_p2.h5")
+            model.load_weights("weights/vae_weights_tr_p2.h5")
         else:
-            model.load_weights("vae_weights_p2.h5")
+            model.load_weights("weights/vae_weights_p2.h5")
     else:
         model.train_model(x_train, x_val,
                           y_train, y_val,
@@ -79,7 +79,7 @@ if __name__ == '__main__':
             num_plots = H + F - 1
             for p in range(num_plots):
                 ax = fig.add_subplot(3, num_plots / 3 + 1, p + 1)
-                ax.set_ylim([0, 1.0])
+                ax.set_ylim([0.0, 1.0])
                 ax.set_title("Timestep " + str(p + 1))
                 plots.append(ax)
 

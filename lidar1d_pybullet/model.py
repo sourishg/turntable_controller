@@ -1,6 +1,6 @@
 from __future__ import print_function
 
-from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Flatten, Dot, Add, TimeDistributed, Concatenate, CuDNNLSTM
+from keras.layers import Lambda, Input, Dense, Reshape, Multiply, Flatten, Dot, Add, TimeDistributed, Concatenate
 from keras.models import Model
 from keras.losses import mse
 from keras import backend as K
@@ -33,7 +33,7 @@ class TRFModel:
             self.output_dim = self.num_rays
 
         self.control_dim = 1
-        self.latent_dim = 20
+        self.latent_dim = 30
 
         self.encoder = None
         self.transition_model = None
@@ -44,6 +44,9 @@ class TRFModel:
         self.trans_loss = 0
 
         self.training_phase = 0
+
+        self.tf_session = K.get_session()
+        self.tf_graph = tf.get_default_graph()
 
     def _get_task_relevant_cost(self, x):
         lo = int(FLAGS.num_rays) / 2 - int(FLAGS.tr_half_width)
@@ -65,12 +68,7 @@ class TRFModel:
         error_y = K.switch(K.greater_equal(delta_y, 0), lambda: 0.6 * delta_y, lambda: -delta_y)
         mse_loss = K.mean(K.square(error_y), axis=-1)
 
-        if self.training_phase == 0:
-            return mse_loss + self.kl_loss
-        elif self.training_phase == 1:
-            return mse_loss + self.kl_loss + self.trans_loss
-        else:
-            return mse_loss + self.kl_loss + self.trans_loss
+        return mse_loss + self.kl_loss + self.trans_loss
 
     def _sampling_prior(self, args):
         rays = args
@@ -140,6 +138,7 @@ class TRFModel:
         return Model([latent_state, control], cost, name='cost_model')
 
     def _build_vae_model(self):
+        K.clear_session()
         input_rays = Input(shape=(self.H + self.F, self.num_rays), name='input_rays')
         input_controls = Input(shape=(self.H + self.F, ), name='input_controls')
 
@@ -219,20 +218,22 @@ class TRFModel:
                          validation_data=([x_val, u_val], y_val))
             # serialize weights to HDF5
             if self.task_relevant:
-                self.vae.save_weights("vae_weights_tr_p0.h5")
+                self.vae.save_weights("weights/vae_weights_tr_p0.h5")
             else:
-                self.vae.save_weights("vae_weights_p0.h5")
+                self.vae.save_weights("weights/vae_weights_p0.h5")
             print("Saved weights phase", self.training_phase)
+            self.training_phase = 1
 
         if self.training_phase == 1:
             print("Training phase:", self.training_phase)
+            self.kl_loss = 0
+            self.trans_loss = 0
             self.vae = self._build_vae_model()
             if self.task_relevant:
-                self.vae.load_weights("vae_weights_tr_p0.h5", by_name=True)
+                self.vae.load_weights("weights/vae_weights_tr_p0.h5", by_name=True)
             else:
-                self.vae.load_weights("vae_weights_p0.h5", by_name=True)
+                self.vae.load_weights("weights/vae_weights_p0.h5", by_name=True)
             self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
-
             self.vae.summary()
             self.vae.fit([x_train, u_train],
                          y_train,
@@ -241,37 +242,21 @@ class TRFModel:
                          validation_data=([x_val, u_val], y_val))
             # serialize weights to HDF5
             if self.task_relevant:
-                self.vae.save_weights("vae_weights_tr_p1.h5")
+                self.vae.save_weights("weights/vae_weights_tr_p1.h5")
             else:
-                self.vae.save_weights("vae_weights_p1.h5")
+                self.vae.save_weights("weights/vae_weights_p1.h5")
             print("Saved weights phase", self.training_phase)
-
-            """
-            self.transition_model.compile(optimizer='adam', loss='mean_squared_error')
-
-            for i in range(1, self.H + self.F, 1):
-                ray = x_train[:, i, :]
-                ray_prev = x_train[:, i - 1, :]
-                u_prev = u_train[:, i - 1]
-
-                prev_belief = self.encoder.predict(ray_prev)
-                true_belief = self.encoder.predict(ray)
-
-                print(prev_belief.shape, u_prev.shape)
-
-                self.transition_model.fit([prev_belief, u_prev],
-                                          true_belief,
-                                          batch_size=1000,
-                                          epochs=10)
-            """
+            self.training_phase = 2
 
         if self.training_phase == 2:
             print("Training phase:", self.training_phase)
+            self.kl_loss = 0
+            self.trans_loss = 0
             self.vae = self._build_vae_model()
             if self.task_relevant:
-                self.vae.load_weights("vae_weights_tr_p1.h5", by_name=True)
+                self.vae.load_weights("weights/vae_weights_tr_p1.h5", by_name=True)
             else:
-                self.vae.load_weights("vae_weights_p1.h5", by_name=True)
+                self.vae.load_weights("weights/vae_weights_p1.h5", by_name=True)
             self.vae.compile(optimizer='adam', loss=self._vae_loss_function)
             self.vae.summary()
             self.vae.fit([x_train, u_train],
@@ -281,9 +266,9 @@ class TRFModel:
                          validation_data=([x_val, u_val], y_val))
             # serialize weights to HDF5
             if self.task_relevant:
-                self.vae.save_weights("vae_weights_tr_p2.h5")
+                self.vae.save_weights("weights/vae_weights_tr_p2.h5")
             else:
-                self.vae.save_weights("vae_weights_p2.h5")
+                self.vae.save_weights("weights/vae_weights_p2.h5")
             print("Saved weights phase", self.training_phase)
 
     def get_encoder_model(self):

@@ -1,6 +1,5 @@
 import pybullet as p
 import pybullet_data
-import time
 import math
 import numpy as np
 import sys
@@ -38,6 +37,12 @@ p.createMultiBody(0, 0)
 
 
 def normAngle(theta):
+    """
+    Normalize theta between (-PI, PI)
+    :param theta: input angle
+    :return: normalized angle
+    """
+
     while theta > PI:
         theta = theta - 2 * PI
     while theta <= -PI:
@@ -46,9 +51,15 @@ def normAngle(theta):
 
 
 def createRandomWorld():
-    radius = 0.2
-    max_x, max_y = 4, 4
-    eps = 0.3
+    """
+    Generate random obstacle cylinders
+    :return: set of obstacle IDs
+    """
+
+    radius = 0.2  # radius of cylinder
+    max_x, max_y = 4, 4  # bounding box of obstacles
+    eps = 0.3  # min distance of obstacles from robot
+
     x1 = np.random.uniform(-max_x, -eps, num_obstacles / 2)
     x2 = np.random.uniform(eps, max_x, num_obstacles / 2)
     x = np.concatenate((x1, x2), axis=0)
@@ -69,6 +80,12 @@ def createRandomWorld():
 
 
 def repositionObstacles(UIDs):
+    """
+    Reposition obstacles
+    :param UIDs: obstacle IDs
+    :return:
+    """
+
     max_x, max_y = 4, 4
     eps = 0.3
     x1 = np.random.uniform(-max_x, -eps, num_obstacles / 2)
@@ -88,9 +105,11 @@ def repositionObstacles(UIDs):
 
 
 def createWorld():
-    '''
+    """
     Create a fixed world
-    '''
+    :return:
+    """
+
     obstCylinderId = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.3)
     obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[2.2, 1.2, 0], baseOrientation=[0, 0, 0, 1])
     obstUID = p.createMultiBody(mass, obstCylinderId, -1, basePosition=[3, 1, 0], baseOrientation=[0, 0, 0, 1])
@@ -104,6 +123,12 @@ def createWorld():
 
 
 def getBatchRayTo(theta):
+    """
+    Generate laser ranges at a particular angle
+    :param theta: current angle
+    :return:
+    """
+
     rays = []
     theta_inc = theta_range / float(num_rays)
     for i in range(num_rays):
@@ -115,6 +140,12 @@ def getBatchRayTo(theta):
 
 
 def getRangeReading(theta):
+    """
+    Simulate laser range readings
+    :param theta: current angle
+    :return:
+    """
+
     ranges = []
     rayFroms = [lidar_pos for i in range(num_rays)]
     rayTos = getBatchRayTo(theta)
@@ -159,5 +190,5 @@ if __name__ == '__main__':
                 f.write("\n")
                 init_theta = normAngle(init_theta + u * dt)
         # change the world
-        f.write("1000\n")
+        f.write("1000\n")  # 1000 is written to file to denote end of a world
         repositionObstacles(UIDs)
