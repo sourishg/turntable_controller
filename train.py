@@ -54,6 +54,10 @@ if __name__ == '__main__':
 
     if FLAGS.task_relevant:
         for k in range(0, y_test.shape[0], 1):
+            choice = raw_input('Plot? (Y/n)\n')
+            if choice == 'n':
+                break
+
             fig = plt.figure()
             plt.ylim((0.0, 1.0))
             y_true = y_test[k]
@@ -73,6 +77,10 @@ if __name__ == '__main__':
             plt.show()
     else:
         for k in range(0, y_test.shape[0], 1):
+            choice = raw_input('Plot? (Y/n)\n')
+            if choice == 'n':
+                break
+
             fig = plt.figure(figsize=(15, 8))
             y = np.reshape(y_test[k], (H + F - 1, model.output_dim))
             plots = []
@@ -93,3 +101,6 @@ if __name__ == '__main__':
                 plots[p].plot([j for j in range(num_rays)], [float(u) for u in y[p]], 'r.')
 
             plt.show()
+
+    model.cleanup()
+

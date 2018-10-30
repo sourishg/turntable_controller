@@ -299,9 +299,9 @@ if __name__ == '__main__':
     # solve_mpc(prev_ranges[-1])
 
     d = 1.0
-    min_thresh = 4.5
+    min_thresh = 3.5
     prev_u = 0.0
-    while d > 1.0 - 5.5/5.0:
+    while d > 1.0 - min_thresh/5.0:
         u = solve_mpc(prev_ranges[-1], prev_u)
         print(u[0, 0])
         d, prev_gt_ranges = simulate_controller(u[0, 0], 1)
@@ -325,4 +325,5 @@ if __name__ == '__main__':
         plt.show()
         """
 
-    time.sleep(2)
+    model.cleanup()
+    p.disconnect()

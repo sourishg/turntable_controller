@@ -271,6 +271,9 @@ class TRFModel:
                 self.vae.save_weights("weights/vae_weights_p2.h5")
             print("Saved weights phase", self.training_phase)
 
+    def cleanup(self):
+        K.clear_session()
+
     def get_encoder_model(self):
         return self.encoder
 

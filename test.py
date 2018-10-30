@@ -31,6 +31,10 @@ if __name__ == '__main__':
     cost_model = model.get_cost_model()
 
     for k in range(0, y_test.shape[0], 1):
+        choice = raw_input('Plot? (Y/n)\n')
+        if choice == 'n':
+            break
+
         plots = []
 
         output_dim = num_rays
@@ -74,3 +78,5 @@ if __name__ == '__main__':
                 plots[p].plot([j for j in range(FLAGS.num_rays)], [float(u) for u in y_true[p]], 'r.')
 
         plt.show()
+
+    model.cleanup()
