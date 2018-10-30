@@ -11,6 +11,8 @@ It is recommended to work on a `virtualenv`. Install [`virtualenvwrapper`](http:
 (env) $ pip install numpy matplotlib pybullet tensorflow-gpu keras cvxpy==0.4.11
 ```
 
+Use Python 2.7. The code is not tested for Python 3.
+
 ## Collect Dataset
 
 Example datasets are provided in `data/`. Data can also be collected by running: 
