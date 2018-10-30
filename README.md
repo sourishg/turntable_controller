@@ -2,7 +2,7 @@
 
 ![](img/demo.gif)
 
-The repository contains a simple implementation of how to learn data-driven dynamic models of task-relevant features for control. In the above example, the goal of the simple turntable controller is to point to a direction where obstacles are not present (or are farthest away). The turntable is fitted with a 1D laser scanner to detect obstacles. The state of the system is defined by a 100-dimensional vector of laser points. We learn the latent space of task-relevant features and its dynamics using a variational auto-encoder (VAE). Using the learned dynamics we use a model-predictive controller to complete the task. 
+The repository contains a simple implementation of how to learn data-driven dynamic models of task-relevant features for control. In the above example, the goal of the simple turntable controller is to point to a direction where obstacles are not present (or are farthest away). The turntable is fitted with a 2D laser scanner to detect obstacles. The state of the system is defined by a 100-dimensional vector of laser points. We learn the latent space of task-relevant features and its dynamics using a variational auto-encoder (VAE). Using the learned dynamics we use a model-predictive controller to complete the task. 
 
 ## Dependencies
 
