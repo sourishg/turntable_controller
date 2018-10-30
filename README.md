@@ -22,7 +22,7 @@ Each line in the data file denotes the ground truth state of the system:
 ```bash
 u u_dot x_1 x_2 ... x_100
 ```
-where `u`, `u_dot`, and `x_i` denotes current angle, angular velocity, and laser scan values.
+where `u`, `u_dot`, and `x_i` denotes current angle, angular velocity, and laser scan values. Before collecting a dataset you can modify the values of `NUM_OBSTACLES`, `WORLD_SAMPLES`, and `CONTROL_SAMPLES` in `params.py` to generate different datasets.
 
 ## Train Model
 
